@@ -128,6 +128,9 @@ textarea{width:100%;font:12px ui-monospace,Menlo,Consolas,monospace;resize:verti
       <div id="dsGrid"></div>
       <div class="row"><button class="btn sm" data-a="dsClear">Clear</button><button class="btn sm go" data-a="dsSave">Save</button><button class="btn sm" data-a="dsTest">Test</button></div>
       <p class="msg" id="dsMsg"></p>
+      <div class="lbl">Share as text</div>
+      <div class="row"><button class="btn sm" data-a="dsShare">Share level</button><button class="btn sm" data-a="dsLoadText">Load from text</button></div>
+      <textarea id="dsText" rows="3" placeholder="Share puts the level code here. Paste a level code here, then Load from text." aria-label="Level code"></textarea>
       <button class="btn" data-a="back">Back</button>
     </div>
     <div class="panel" id="pOrder">
@@ -781,6 +784,26 @@ function dsTest() {
   const rows = dsRows(); if (!rows.length) return msg('dsMsg', 'Add at least one brick first');
   testMap = { id: ds.id, name: ds.name, rows }; startGame();
 }
+// one-line share code: JB:<name>:<row>/<row>/...  (loader also takes bare 7-char rows, e.g. pasted from LEVELS)
+function dsShare() {
+  const rows = dsRows(); if (!rows.length) return msg('dsMsg', 'Add at least one brick first');
+  const code = `JB:${(($('dsName').value.trim() || 'Untitled').replace(/\s+/g, ' '))}:${rows.join('/')}`;
+  $('dsText').value = code;
+  const done = t => msg('dsMsg', t), copy = () => { try { navigator.clipboard.writeText(code).then(() => done('Level code copied'), () => done('Level code is below')); } catch (e) { done('Level code is below'); } };
+  if (navigator.share && matchMedia('(pointer:coarse)').matches) navigator.share({ text: code }).then(() => done('Shared'), copy); else copy();
+}
+function parseLevel(txt) {
+  const m = /JB:(.*):([.123RCBH/]+)/i.exec(txt), cs = '.123RCBHrcbh';
+  let name = 'Shared level', rows;
+  if (m) { name = m[1].trim().slice(0, 24) || name; rows = m[2].toUpperCase().replace(/^\/+|\/+$/g, '').split('/'); }
+  else rows = (txt.match(new RegExp(`(?<![${cs}])[${cs}]{${COLS}}(?![${cs}])`, 'g')) || []).map(r => r.toUpperCase());
+  return validRows(rows) ? { name, rows } : null;
+}
+function dsLoadText() {
+  const l = parseLevel($('dsText').value);
+  if (!l) return msg('dsMsg', `No valid level found. Use a JB: code or rows of ${COLS} characters (. 1 2 3 R C B H), up to ${ROWS} rows.`);
+  dsLoad({ id: newId(), name: l.name, rows: l.rows }); msg('dsMsg', 'Loaded. Save to keep it, or Test to play it.');
+}
 
 // level order + JSON export / import
 function orRender() {
@@ -821,6 +844,8 @@ function act(a, el) {
   else if (a === 'dsClear') { ds.grid = blankGrid(); dsRender(); }
   else if (a === 'dsSave') dsSave();
   else if (a === 'dsTest') dsTest();
+  else if (a === 'dsShare') dsShare();
+  else if (a === 'dsLoadText') dsLoadText();
   else if (a === 'orUp' && i > 0) { [order[i - 1], order[i]] = [order[i], order[i - 1]]; saveLib(); orRender(); }
   else if (a === 'orDn' && i < order.length - 1) { [order[i + 1], order[i]] = [order[i], order[i + 1]]; saveLib(); orRender(); }
   else if (a === 'orRm') { order.splice(i, 1); saveLib(); orRender(); }

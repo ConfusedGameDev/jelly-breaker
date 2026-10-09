@@ -17,7 +17,7 @@ A block breaker where everything is made of jelly. Bricks and the paddle are sof
 
 ## Level designer
 
-Pause → Debug → Level designer lets you paint levels on a 7×10 grid, save them, and test them straight away. Level order reorders, removes and adds levels, and exports/imports everything as JSON. Levels are saved in the browser's localStorage. To ship a level, paste its rows into `LEVELS` in `index.html`.
+Pause → Debug → Level designer lets you paint levels on a 7×10 grid, save them, and test them straight away. Level order reorders, removes and adds levels, and exports/imports everything as JSON. **Share level** turns the current level into a one-line code like `JB:My level:1111111/RRRRRRR/...B...` (copied to the clipboard, or the share sheet on phones); paste a code and tap **Load from text** to open it. Levels are saved in the browser's localStorage. To ship a level, paste its rows into `LEVELS` in `index.html`.
 
 ## Features
 
