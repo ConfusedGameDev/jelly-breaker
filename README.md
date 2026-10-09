@@ -28,4 +28,4 @@ npx serve .
 
 ## Deploying
 
-The site is a static file hosted on Vercel.
+The site is a static file hosted on Vercel. The Vercel project is linked to this repo, so every push to `main` deploys to production automatically.
