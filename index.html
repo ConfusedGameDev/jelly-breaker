@@ -73,6 +73,9 @@ textarea{width:100%;font:12px ui-monospace,Menlo,Consolas,monospace;resize:verti
 #dsGrid{display:grid;grid-template-columns:repeat(7,1fr);gap:3px;width:100%;touch-action:none;margin:8px 0 2px;padding:6px;
   background:rgba(0,0,0,.25);border-radius:12px;cursor:crosshair}
 #dsGrid div{aspect-ratio:2/1;border-radius:6px;display:grid;place-items:center;font-size:13px;font-weight:700;color:#2a1245;line-height:1}
+#mpList{list-style:none;padding:0;margin:0;width:100%}
+#mpList li{padding:7px 10px;background:rgba(255,255,255,.07);border-radius:10px;margin:4px 0;font-size:16px;display:flex;justify-content:space-between}
+#mpCd{font-size:20px;font-weight:700;color:#ffd93d;margin:10px 0;min-height:1.2em}
 #orList{list-style:none;padding:0;margin:0 0 6px;width:100%}
 #orList li{display:flex;align-items:center;gap:5px;padding:5px 6px;background:rgba(255,255,255,.07);border-radius:10px;margin:4px 0}
 #orList li b{width:20px;font-size:13px;opacity:.6}
@@ -97,6 +100,7 @@ textarea{width:100%;font:12px ui-monospace,Menlo,Consolas,monospace;resize:verti
       <h1 id="ovTitle">Jelly<br>Breaker</h1>
       <p id="ovSub">Wobbly bricks, a squishy ball, one thumb.</p>
       <button id="ovBtn" tabindex="-1">Tap to play</button>
+      <button class="btn" data-a="multi" style="margin-top:18px">Multiplayer</button>
       <p id="ovBest"></p>
     </div>
     <div class="panel" id="pPause">
@@ -106,7 +110,24 @@ textarea{width:100%;font:12px ui-monospace,Menlo,Consolas,monospace;resize:verti
       <button class="btn" data-a="sound" id="bSound">Sound: on</button>
       <button class="btn" data-a="editTest" id="bEditTest">Back to designer</button>
       <button class="btn" data-a="debug">Debug</button>
-      <button class="btn" data-a="quit">Quit to title</button>
+      <button class="btn" data-a="quit" id="bQuit">Quit to title</button>
+    </div>
+    <div class="panel" id="pMulti">
+      <h2>Multiplayer</h2>
+      <input id="mpName" maxlength="14" placeholder="Your name" aria-label="Your name">
+      <div id="mpMenu">
+        <button class="btn go" data-a="mpQuick">Quick match</button>
+        <button class="btn" data-a="mpCreate">Create room</button>
+        <div class="row"><input id="mpCode" maxlength="4" placeholder="CODE" aria-label="Room code" style="width:96px;text-transform:uppercase;text-align:center"><button class="btn sm" data-a="mpJoin">Join room</button></div>
+      </div>
+      <div id="mpRoom" hidden>
+        <div class="lbl" id="mpLbl"></div>
+        <ol id="mpList"></ol>
+        <p id="mpCd"></p>
+        <button class="btn sm" data-a="mpShare" id="bMpShare">Share invite link</button>
+      </div>
+      <p class="msg" id="mpMsg"></p>
+      <button class="btn" data-a="mpLeave">Leave</button>
     </div>
     <div class="panel" id="pDebug">
       <h2>Debug</h2>
@@ -266,8 +287,9 @@ if (!lib.length) lib = JSON.parse(JSON.stringify(DEFAULTS));
 order = Array.isArray(order) ? order.filter(id => typeof id === 'string') : lib.map(l => l.id);
 function saveLib() { try { localStorage.setItem('jellybreaker.levels', JSON.stringify(lib)); localStorage.setItem('jellybreaker.order', JSON.stringify(order)); } catch (e) {} }
 const byId = id => lib.find(l => l.id === id);
-const playlist = () => { if (testMap) return [testMap]; const p = order.map(byId).filter(Boolean); return p.length ? p : DEFAULTS; };
+const playlist = () => { if (mp && mp.live) return DEFAULTS; if (testMap) return [testMap]; const p = order.map(byId).filter(Boolean); return p.length ? p : DEFAULTS; };
 // power-ups: colour, drop weight, name
+const GARB = ['#d7c2f0', '#9a7cc4']; // bricks sent over by a rival
 const DROPS = { wide: ['#3ddbd9', 3, 'Wide'], multi: ['#ffd93d', 3, 'Multi'], pad: ['#ff9f43', 2, 'Twin pad'], gun: ['#ff4f79', 2, 'Gun'], sticky: ['#7bed6f', 2, 'Sticky'], mega: ['#b06bff', 2, 'Mega'] };
 const GUN = [3, 5, 10];
 const rollDrop = () => { let t = 0; for (const k in DROPS) t += DROPS[k][1]; let r = Math.random() * t; for (const k in DROPS) if ((r -= DROPS[k][1]) < 0) return k; return 'wide'; };
@@ -277,22 +299,35 @@ paddle.tj = new Jelly(paddle.x, paddle.y, paddle.w, paddle.h, 8, 2, 1300, 18, 90
 let state = 'menu', prevState = 'ready', score = 0, lives = 3, level = 1, combo = 0, best = 0;
 let blocks = [], balls = [], drops = [], parts = [], rings = [], texts = [], shots = [], fx = [], beams = [], sparks = [], flashes = [], words = [];
 let targetX = W / 2, shake = 0, kx = 0, ky = 0, juice = true, clearT = 0, time = 0, ambT = 0, keyL = false, keyR = false, muted = false;
-let gun = 0, gunTier = 0, sticky = 0, mega = 0, megaTier = 0;
-try { best = +localStorage.getItem('jellybreaker.best') || 0; muted = localStorage.getItem('jellybreaker.muted') === '1'; } catch (e) {}
+let gun = 0, gunTier = 0, sticky = 0, mega = 0, megaTier = 0, mp = null, myName = 'Jelly' + Math.floor(rnd(10, 99));
+try { best = +localStorage.getItem('jellybreaker.best') || 0; muted = localStorage.getItem('jellybreaker.muted') === '1'; myName = localStorage.getItem('jellybreaker.name') || myName; } catch (e) {}
 const speed = () => Math.min(480, 320 + (level - 1) * 20);
 const aim = () => Math.sin(time * 2.2); // sticky launch angle, swings left <-> right
 
 function buildLevel() {
   blocks = []; drops = []; shots = []; fx = []; beams = [];
-  const pl = playlist(), map = pl[(level - 1) % pl.length].rows, loop = Math.floor((level - 1) / pl.length), top = CEIL + 24;
+  const pl = playlist(), map = pl[(level - 1) % pl.length].rows, loop = Math.floor((level - 1) / pl.length);
   map.forEach((row, r) => [...row].forEach((ch, c) => {
     if (!BRICK[ch]) return;
     let [type, hp] = BRICK[ch]; if (type === 'n' && loop > 0 && hp === 1 && (r + c + loop) % 3 === 0) hp = 2;
-    const x = 10 + BW / 2 + c * (BW + GAP), y = top + BH / 2 + r * (BH + GAP);
-    const j = new Jelly(x, y, BW, BH, 4, 2, 420, 7, 500);
-    for (const p of j.pts) p.y -= 70; j.awake = true; // drop in and wobble to rest
-    blocks.push({ x, y, hw: BW / 2, hh: BH / 2, hp, maxHp: hp, type, r, c, regenT: 0, heal: 0, col: type === 'regen' ? REGEN_COL : PAL[r % PAL.length], flash: 0, delay: r * .05 + c * .025, j });
+    blocks.push(mkBlock(r, c, type, hp, type === 'regen' ? REGEN_COL : PAL[r % PAL.length], r * .05 + c * .025, 70));
   }));
+}
+function mkBlock(r, c, type, hp, col, delay, drop) {
+  const x = 10 + BW / 2 + c * (BW + GAP), y = CEIL + 24 + BH / 2 + r * (BH + GAP), j = new Jelly(x, y, BW, BH, 4, 2, 420, 7, 500);
+  for (const p of j.pts) p.y -= drop; j.awake = true; // drop in and wobble to rest
+  return { x, y, hw: BW / 2, hh: BH / 2, hp, maxHp: hp, type, r, c, regenT: 0, heal: 0, col, flash: 0, delay, j };
+}
+function addGarbage() { // a rival broke a brick: drop one into the highest free cell, or harden a brick if the field is full
+  const free = [];
+  for (let r = 0; r < ROWS && free.length < COLS; r++) for (let c = 0; c < COLS; c++) {
+    if (blocks.some(k => !k.dead && k.r === r && k.c === c)) continue;
+    const x = 10 + BW / 2 + c * (BW + GAP), y = CEIL + 24 + BH / 2 + r * (BH + GAP);
+    if (!balls.some(b => Math.abs(b.x - x) < BW / 2 + b.r + 4 && Math.abs(b.y - y) < BH / 2 + b.r + 4)) free.push([r, c]);
+  }
+  if (free.length) { const [r, c] = free[Math.floor(Math.random() * free.length)]; blocks.push(mkBlock(r, c, 'n', 1, GARB, 0, 40)); sfx.heal(); return; }
+  const H2 = blocks.filter(k => !k.dead && k.hp < 3); if (!H2.length) return;
+  const k = H2[Math.floor(Math.random() * H2.length)]; k.hp++; k.maxHp = Math.max(k.maxHp, k.hp); k.heal = 1; k.j.impulse(k.x, k.y - k.hh, 0, 1, 160, 30);
 }
 function newBall(x, y, vx, vy) { return { x, y, vx, vy, r: 7, s: 1, sv: 0, ax: 0, ay: 1, trail: [], tt: 0, stuck: null }; }
 function resetBall() { balls = [newBall(paddle.x, paddle.y - 16, 0, 0)]; combo = 0; state = 'ready'; }
@@ -317,6 +352,7 @@ function startGame() {
 }
 function gameOver() {
   state = 'over'; balls = [];
+  if (mp && mp.live) { mpUp({ t: 'stat', lives: 0, blocks: blocks.length }); mpUp({ t: 'dead' }); show('pMulti'); lobbyUI(); msg('mpMsg', 'Knocked out! Watching the others…'); return; }
   if (score > best) { best = score; try { localStorage.setItem('jellybreaker.best', best); } catch (e) {} }
   showOv('Game<br>Over', `You scored ${score}`, 'Play again');
 }
@@ -326,10 +362,11 @@ function showOv(title, sub, btn) {
 }
 function pause() {
   if (state !== 'play' && state !== 'ready' && state !== 'clear') return;
+  if (mp && mp.live) return showPause(); // matches keep running behind the menu
   prevState = state; state = 'paused'; showPause();
   if (AU.ctx) AU.ctx.suspend();
 }
-function resume() { state = prevState; ov.classList.remove('show'); if (AU.ctx) AU.ctx.resume(); }
+function resume() { if (state !== 'paused') return ov.classList.remove('show'); state = prevState; ov.classList.remove('show'); if (AU.ctx) AU.ctx.resume(); }
 let hudKey = '', hudScore = 0;
 function hud() {
   const k = score + '|' + level + '|' + lives; if (k === hudKey) return; hudKey = k;
@@ -367,7 +404,7 @@ function kick(x, y, m) { if (juice) { kx = clamp(kx + x * m, -6, 6); ky = clamp(
 const WORDS = ['SPLAT!', 'POW!', 'BLORP!', 'WHAM!', 'SPLOSH!', 'BAM!'];
 function word(x, y, t, col, sz = 1) {
   if (!juice) return; if (words.length >= 4) words.shift();
-  words.push({ x: clamp(x, 30 + 24 * sz, W - 30 - 24 * sz), y, t, col, sz, rot: rnd(-.3, .3), life: .75 });
+  const hw = t.length * 7 * sz + 8; words.push({ x: clamp(x, hw, W - hw), y, t, col, sz, rot: rnd(-.3, .3), life: .75 });
 }
 function hitBlock(k, hx, hy, ivx, ivy) {
   const sp = Math.hypot(ivx, ivy) || 1, dx = ivx / sp, dy = ivy / sp;
@@ -388,6 +425,7 @@ function killBlock(k) {
   if (combo >= 5 && combo % 5 === 0) word(k.x, k.y - 22, 'COMBO x' + combo, '#ffd93d', 1.15);
   else if (combo >= 3 && Math.random() < .35) word(k.x, k.y - 22, WORDS[Math.floor(Math.random() * WORDS.length)], k.col[0]);
   if (k.type === 'row' || k.type === 'col' || k.type === 'bomb') fx.push({ t: .09, k });
+  if (mp && mp.live) mp.ob++;
   if (Math.random() < .14 && drops.length < 3) drops.push({ x: k.x, y: k.y, type: rollDrop(), t: 0 });
 }
 function special(k) { // row / column / bomb blast; specials it destroys chain through fx
@@ -461,7 +499,7 @@ function stepBall(b, dt) {
   fixSpeed(b);
 }
 function update(dt) {
-  time += dt;
+  time += dt; if (mp) mpTick(dt);
   // paddle
   if (keyL) targetX -= 460 * dt; if (keyR) targetX += 460 * dt;
   if (state === 'play') {
@@ -485,7 +523,8 @@ function update(dt) {
       stepBall(b, dt);
       b.tt += dt; if (b.tt > .016) { b.tt = 0; b.trail.push(b.x, b.y); if (b.trail.length > 14) b.trail.splice(0, 2); }
     }
-    balls = balls.filter(b => b.y < H + 30);
+    const nb = balls.length; balls = balls.filter(b => b.y < H + 30);
+    if (mp && mp.live && balls.length < nb) mpUp({ t: 'send', kind: 'ball', n: nb - balls.length });
     for (const s of shots) {
       s.y -= 640 * dt; if (s.y < CEIL) { s.dead = true; continue; }
       for (const k of blocks) if (!k.dead && k.delay <= 0 && Math.abs(s.x - k.x) < k.hw + 2 && Math.abs(s.y - k.y) < k.hh + 5) { s.dead = true; hitBlock(k, s.x, k.y + k.hh, 0, -1); break; }
@@ -651,6 +690,10 @@ function render() {
     g.beginPath(); g.arc(x, y, 13.5, -1.571, -1.571 + 6.283 * f); g.strokeStyle = 'rgba(255,255,255,.75)'; g.lineWidth = 2.5; g.stroke();
     if (lb) { g.font = `700 11px ${FONT}`; g.fillStyle = '#fff'; g.fillText(lb, x, y + 22); }
   });
+  if (mp && mp.live) { // rivals: name, lives, bricks left
+    g.font = `600 11px ${FONT}`; g.fillStyle = 'rgba(255,255,255,.6)';
+    g.fillText(mp.players.filter(p => p.id !== mp.me).map(p => p.name + (p.alive ? ` ♥${p.lives} ▦${p.blocks}` : ' ✕')).join('   '), W / 2, H - 12);
+  }
   if (state === 'ready') {
     g.globalAlpha = .45 + .25 * Math.sin(time * 4); g.font = `600 14px ${FONT}`; g.fillStyle = '#fff';
     g.fillText('Drag to move, release to launch', W / 2, paddle.y + 46); g.globalAlpha = 1;
@@ -756,19 +799,169 @@ function show(id) {
   for (const el of ov.querySelectorAll('.panel')) el.classList.toggle('on', el.id === id);
   $(id).scrollTop = 0;
 }
-function showPause() { $('bSound').textContent = 'Sound: ' + (muted ? 'off' : 'on'); $('bEditTest').style.display = testMap ? '' : 'none'; show('pPause'); }
+function showPause() {
+  $('bSound').textContent = 'Sound: ' + (muted ? 'off' : 'on'); $('bEditTest').style.display = testMap && !mp ? '' : 'none';
+  for (const a of ['restart', 'debug']) ov.querySelector(`[data-a="${a}"]`).style.display = mp ? 'none' : '';
+  $('bQuit').textContent = mp ? 'Leave match' : 'Quit to title'; show('pPause');
+}
+const menuOpen = () => state === 'paused' || (mp && mp.live && ov.classList.contains('show') && panel === 'pPause');
 function openDebug() { dbLv = level; $('dbLevel').textContent = dbLv; msg('dbMsg', ''); show('pDebug'); }
 function back() {
   if (panel === 'pPause') resume();
   else if (panel === 'pDebug') showPause();
   else if (panel === 'pDesign' || panel === 'pOrder') openDebug();
+  else if (panel === 'pMulti') quit();
 }
 function quit() {
-  testMap = null; level = 1; clearPowers(); balls = []; parts = []; texts = []; sparks = []; flashes = []; words = []; buildLevel(); hud();
+  mpLeave(); testMap = null; level = 1; clearPowers(); balls = []; parts = []; texts = []; sparks = []; flashes = []; words = []; buildLevel(); hud();
   state = 'menu'; showOv('Jelly<br>Breaker', 'Wobbly bricks, a squishy ball, one thumb.', 'Tap to play');
   if (AU.ctx) AU.ctx.resume();
 }
 $('dbPowers').innerHTML = Object.keys(DROPS).map(t => `<button class="btn sm" data-a="pow" data-p="${t}"><i style="background:${DROPS[t][0]}"></i>${DROPS[t][2]}</button>`).join('');
+
+/* ---------- multiplayer: PeerJS star, the host relays and referees ---------- */
+const NP = 'jellybreaker-v1-', PEER_JS = 'https://unpkg.com/peerjs@1.5.4/dist/peerjs.min.js';
+let mpBusy = false;
+const loadPeer = () => window.Peer ? Promise.resolve() : new Promise((ok, no) => { const s = document.createElement('script'); s.src = PEER_JS; s.onload = ok; s.onerror = () => no({ msg: 'Could not load the multiplayer library' }); document.head.appendChild(s); });
+const roomCode = () => Array.from({ length: 4 }, () => 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789'[Math.floor(Math.random() * 32)]).join('');
+const mpNew = o => { mp = Object.assign({ players: [], cd: 0, live: false, pb: 0, pk: 0, kt: 0, ob: 0, st: 0, sk: '' }, o); };
+function mpHost(code, quick) {
+  return new Promise((ok, no) => {
+    const peer = new Peer(NP + code); let done = false;
+    peer.on('error', e => { if (!done) { done = true; peer.destroy(); no(e); } else if (e.type !== 'peer-unavailable') mpLost('Connection error'); });
+    peer.on('open', id => {
+      done = true; mpNew({ peer, host: true, code, quick, me: id, conns: new Map() });
+      mp.players = [{ id, name: myName, alive: true, lives: 3, blocks: 0 }]; peer.on('connection', hostConn); ok();
+    });
+  });
+}
+function mpJoin(code) {
+  return new Promise((ok, no) => {
+    const peer = new Peer(); let done = false;
+    const fail = e => { if (done) return; done = true; clearTimeout(to); peer.destroy(); no(e); }, to = setTimeout(() => fail({ type: 'timeout' }), 9000);
+    peer.on('error', e => { if (!done) fail(e); else if (e.type !== 'peer-unavailable') mpLost('Connection error'); });
+    peer.on('open', () => {
+      const c = peer.connect(NP + code, { reliable: true });
+      c.on('open', () => c.send({ t: 'hi', name: myName }));
+      c.on('data', d => {
+        if (!done) { if (d.t === 'full') return fail({ full: true }); done = true; clearTimeout(to); mpNew({ peer, host: false, conn: c, code, me: peer.id }); ok(); }
+        onMsg(d);
+      });
+      c.on('close', () => { if (done) mpLost('The host left the match'); else fail({ type: 'closed' }); });
+    });
+  });
+}
+async function mpQuick() { // public lobbies QUICK0..3: join the first open one, else host it
+  for (let i = 0; i < 8; i++) {
+    const code = 'QUICK' + (i >> 1);
+    try { await mpJoin(code); mp.quick = true; return; } catch (e) { if (e.full) { i |= 1; continue; } if (e.type !== 'peer-unavailable') throw e; }
+    try { await mpHost(code, true); return; } catch (e) { if (e.type !== 'unavailable-id') throw e; } // someone beat us to it: try joining again
+  }
+  throw { msg: 'Quick match is busy, try a room code' };
+}
+function hostConn(c) {
+  c.on('data', d => hostMsg(d, c));
+  c.on('close', () => {
+    if (!mp) return; mp.conns.delete(c.peer); const p = mp.players.find(p => p.id === c.peer); if (!p) return;
+    if (mp.live) { p.alive = false; checkWin(); } else mp.players = mp.players.filter(q => q !== p);
+    lobbySync();
+  });
+}
+function hostMsg(d, c) { // c is null for the host's own messages
+  if (!mp) return;
+  if (d.t === 'hi') {
+    if (mp.live || mp.players.length >= 8) { c.send({ t: 'full' }); setTimeout(() => c.close(), 300); return; }
+    mp.conns.set(c.peer, c); mp.players.push({ id: c.peer, name: String(d.name || 'Jelly').slice(0, 14), alive: true, lives: 3, blocks: 0 });
+    if (mp.cd <= 0) mp.cd = 5; return lobbySync();
+  }
+  const from = c ? c.peer : mp.me, p = mp.players.find(p => p.id === from); if (!p) return;
+  if (d.t === 'send') { // balls lost / bricks broken go to a rival; with 3+ alive each one picks a random rival
+    const T = mp.players.filter(q => q.alive && q.id !== from), n = {}; if (!T.length) return;
+    for (let i = 0; i < Math.min(50, d.n | 0); i++) { const q = T[Math.floor(Math.random() * T.length)]; n[q.id] = (n[q.id] || 0) + 1; }
+    for (const id in n) deliver(id, { t: 'get', kind: d.kind === 'ball' ? 'ball' : 'brick', n: n[id], from: p.name });
+  } else if (d.t === 'stat') { p.lives = d.lives | 0; p.blocks = d.blocks | 0; lobbySync(); }
+  else if (d.t === 'dead') { p.alive = false; p.lives = 0; checkWin(); lobbySync(); }
+}
+function lobbySync() { if (!mp || !mp.host) return; if (!mp.live && mp.players.length < 2) mp.cd = 0; bc({ t: 'lobby', players: mp.players, cd: mp.cd }); }
+function bc(m) { for (const c of mp.conns.values()) if (c.open) c.send(m); onMsg(m); }
+function deliver(id, m) { if (id === mp.me) onMsg(m); else { const c = mp.conns.get(id); if (c && c.open) c.send(m); } }
+function mpUp(m) { if (!mp) return; if (mp.host) hostMsg(m, null); else if (mp.conn.open) mp.conn.send(m); }
+function checkWin() {
+  if (!mp.live) return; const A = mp.players.filter(p => p.alive);
+  if (A.length <= 1) { mp.live = false; bc({ t: 'win', id: A[0] ? A[0].id : null, name: A[0] ? A[0].name : '' }); }
+}
+function onMsg(d) {
+  if (!mp) return;
+  if (d.t === 'lobby') { mp.players = d.players; if (!mp.host) mp.cd = d.cd; lobbyUI(); }
+  else if (d.t === 'go') { mp.live = true; testMap = null; startGame(); }
+  else if (d.t === 'get' && mp.live) {
+    if (d.kind === 'ball') { mp.pb += d.n; word(paddle.x, paddle.y - 60, d.n > 1 ? `+${d.n} BALLS!` : 'BONUS BALL!', '#7bed6f'); }
+    else { mp.pk += d.n; texts.push({ x: W / 2, y: CEIL + 14, t: `+${d.n} brick${d.n > 1 ? 's' : ''} from ${d.from}`, life: 1 }); }
+  } else if (d.t === 'win') {
+    const me = d.id === mp.me; mp.live = false; mpLeave(); state = 'over'; balls = []; drops = []; shots = [];
+    if (me) { sfx.clear(); buzz(40); }
+    if (score > best) { best = score; try { localStorage.setItem('jellybreaker.best', best); } catch (e) {} }
+    showOv(me ? 'You<br>win!' : d.id ? 'Game<br>over' : 'Draw', me ? 'Last jelly standing!' : d.id ? `${d.name} is the last jelly standing` : 'Nobody survived', 'Play solo');
+  }
+}
+function mpTick(dt) {
+  if (mp.cd > 0) {
+    const a = Math.ceil(mp.cd); mp.cd -= dt;
+    if (Math.ceil(mp.cd) !== a) {
+      lobbyUI(); tone({ f: mp.cd > 0 ? 660 : 990, dur: .12, g: .14 });
+      if (mp.cd <= 0 && mp.host) { mp.cd = 0; mp.live = true; for (const p of mp.players) { p.alive = true; p.lives = 3; } bc({ t: 'go' }); lobbySync(); }
+    }
+  }
+  if (!mp || !mp.live || (state !== 'play' && state !== 'ready' && state !== 'clear')) return;
+  if (mp.pb > 0 && state === 'play' && balls.length < 7) { // bonus ball from a rival, launched off the pad
+    mp.pb--; const b = newBall(paddle.x + rnd(-20, 20), paddle.y - paddle.h / 2 - 9, 0, 0); b.r = 7 * (1 + megaTier); launchBall(b, rnd(-.5, .5)); balls.push(b); sfx.launch();
+  }
+  if (mp.pk > 0 && state !== 'clear' && (mp.kt -= dt) <= 0) { mp.kt = .07; mp.pk--; addGarbage(); }
+  if ((mp.st -= dt) <= 0) {
+    mp.st = .4; if (mp.ob) { mpUp({ t: 'send', kind: 'brick', n: mp.ob }); mp.ob = 0; }
+    const k = lives + '|' + blocks.length; if (k !== mp.sk) { mp.sk = k; mpUp({ t: 'stat', lives, blocks: blocks.length }); }
+  }
+}
+function mpLeave() { // tells the room we're out (if playing) and hangs up
+  if (!mp) return; const m = mp;
+  if (m.live && !m.host) mpUp({ t: 'dead' });
+  mp = null; lobbyUI(); setTimeout(() => m.peer.destroy(), 600);
+}
+function mpLost(t) {
+  if (!mp) return; const live = mp.live; mpLeave();
+  if (live && state !== 'menu') { state = 'over'; balls = []; showOv('Disconnected', t, 'Play solo'); }
+  else if (panel === 'pMulti') msg('mpMsg', t);
+}
+function lobbyUI() {
+  $('mpMenu').hidden = !!mp || mpBusy; $('mpRoom').hidden = !mp; $('mpName').disabled = !!mp;
+  if (!mp) return;
+  $('mpLbl').textContent = mp.quick ? 'Quick match lobby' : 'Room ' + mp.code; $('bMpShare').hidden = !!mp.quick || mp.live;
+  $('mpList').innerHTML = mp.players.map(p => `<li><span>${esc(p.name)}${p.id === mp.me ? ' (you)' : ''}</span><span>${mp.live ? (p.alive ? '♥'.repeat(Math.max(0, p.lives)) : 'out') : ''}</span></li>`).join('');
+  $('mpCd').textContent = mp.live ? '' : mp.cd > 0 ? 'Starting in ' + Math.ceil(mp.cd) : 'Waiting for another player…';
+}
+function openMulti() {
+  audioInit(); $('mpName').value = myName; msg('mpMsg', ''); show('pMulti'); lobbyUI();
+}
+async function mpGo(a) {
+  if (mp || mpBusy) return;
+  myName = ($('mpName').value.trim() || myName).slice(0, 14); try { localStorage.setItem('jellybreaker.name', myName); } catch (e) {}
+  mpBusy = true; lobbyUI(); msg('mpMsg', 'Connecting…');
+  try {
+    await loadPeer();
+    if (a === 'mpCreate') { for (let i = 0; !mp; i++) try { await mpHost(roomCode(), false); } catch (e) { if (e.type !== 'unavailable-id' || i > 3) throw e; } }
+    else if (a === 'mpJoin') {
+      const c = $('mpCode').value.trim().toUpperCase(); if (!/^[A-Z0-9]{4}$/.test(c)) throw { msg: 'Enter a 4-character room code' };
+      try { await mpJoin(c); } catch (e) { throw e.full ? { msg: 'That match already started or is full' } : e.type === 'peer-unavailable' ? { msg: 'No room with that code' } : e; }
+    } else await mpQuick();
+    msg('mpMsg', '');
+  } catch (e) { msg('mpMsg', e.msg || 'Could not connect' + (e.type ? ` (${e.type})` : '')); }
+  mpBusy = false; lobbyUI();
+}
+function mpShare() {
+  const url = `${location.origin}${location.pathname}?room=${mp.code}`, done = t => msg('mpMsg', t);
+  const copy = () => { try { navigator.clipboard.writeText(url).then(() => done('Invite link copied'), () => done(url)); } catch (e) { done(url); } };
+  if (navigator.share && matchMedia('(pointer:coarse)').matches) navigator.share({ text: 'Join my Jelly Breaker match', url }).then(() => done('Shared'), copy); else copy();
+}
 
 // level designer
 const dsGrid = $('dsGrid');
@@ -873,6 +1066,10 @@ function act(a, el) {
   else if (a === 'lvGo') { testMap = null; level = dbLv; clearPowers(); buildLevel(); resetBall(); hud(); prevState = 'ready'; resume(); }
   else if (a === 'pow') { const t = el.dataset.p; drops.push({ x: clamp(paddle.x + rnd(-30, 30), 20, W - 20), y: paddle.y - 160 - drops.length * 30, type: t, t: 0 }); msg('dbMsg', DROPS[t][2] + ' dropped above the pad. Resume to catch it.'); }
   else if (a === 'life') { lives++; hud(); msg('dbMsg', 'Lives: ' + lives); }
+  else if (a === 'multi') openMulti();
+  else if (a === 'mpQuick' || a === 'mpCreate' || a === 'mpJoin') mpGo(a);
+  else if (a === 'mpShare' && mp) mpShare();
+  else if (a === 'mpLeave') quit();
   else if (a === 'juice') { juice = !juice; kx = ky = 0; paddle.ps = 1; paddle.psv = 0; $('bJuice').textContent = 'Juice: ' + (juice ? 'full' : 'basic'); }
   else if (a === 'dsNew') { dsNew(); msg('dsMsg', 'New level. Save to keep it.'); }
   else if (a === 'dsDup') { ds = { id: newId(), name: (ds.name + ' copy').slice(0, 24), grid: ds.grid.map(r => r.slice()) }; dsRender(); msg('dsMsg', 'Copy created. Save to keep it.'); }
@@ -928,7 +1125,7 @@ ov.addEventListener('click', e => {
   if (b) { b.blur(); if (b.dataset.a) act(b.dataset.a, b); else { tool = b.dataset.t; dsRender(); } return; }
   if (panel === 'pMain' && (state === 'menu' || state === 'over')) startGame();
 });
-$('bPause').addEventListener('click', e => { e.stopPropagation(); if (state === 'paused') resume(); else pause(); });
+$('bPause').addEventListener('click', e => { e.stopPropagation(); if (menuOpen()) resume(); else pause(); });
 function setMute(m) {
   muted = m; $('bMute').classList.toggle('off', m);
   if (master) master.gain.setTargetAtTime(m ? 0 : .9, AU.ctx.currentTime, .02);
@@ -942,11 +1139,11 @@ addEventListener('keydown', e => {
     e.preventDefault();
     if (state === 'ready') launch(); else if (state === 'play') { fire(); releaseStuck(); }
     else if (state === 'paused') { if (panel === 'pPause') resume(); }
-    else if (state === 'menu' || state === 'over') startGame();
+    else if ((state === 'menu' || state === 'over') && panel === 'pMain') startGame();
   }
   else if ((e.key === 'ArrowUp' || e.key === 'w') && state === 'play') { fire(); releaseStuck(); }
-  else if (e.key === 'Escape') { if (state === 'paused') back(); else pause(); }
-  else if (e.key === 'p') { if (state === 'paused') resume(); else pause(); }
+  else if (e.key === 'Escape') { if (menuOpen() || panel === 'pMulti') back(); else pause(); }
+  else if (e.key === 'p') { if (menuOpen()) resume(); else pause(); }
   else if (e.key === 'm') setMute(!muted);
 });
 addEventListener('keyup', e => { if (e.key === 'ArrowLeft' || e.key === 'a') keyL = false; else if (e.key === 'ArrowRight' || e.key === 'd') keyR = false; });
@@ -968,11 +1165,12 @@ function frame(t) {
 }
 resize(); setMute(muted); buildLevel(); hud();
 $('ovBest').textContent = best ? `Best ${best}` : '';
+{ const r = new URLSearchParams(location.search).get('room'); if (r) { openMulti(); $('mpCode').value = r.toUpperCase().slice(0, 4); msg('mpMsg', 'Tap Join room to jump in'); } }
 window.__jelly = {
   get state() { return state; }, get score() { return score; }, get blocks() { return blocks.length; }, get balls() { return balls.length; }, get lives() { return lives; }, get level() { return level; },
   get bx() { return balls[0] ? balls[0].x : null; }, get gun() { return gun; }, get megaTier() { return megaTier; }, get sticky() { return sticky; }, get pads() { return pads().length; },
   get stuck() { return balls.filter(b => b.stuck).length; }, get drops() { return drops.length; }, get panel() { return panel; },
-  get px() { return paddle.x; }, get br() { return balls[0] ? balls[0].r : null; }, get hps() { return blocks.map(k => k.hp); }, get sparks() { return sparks.length; }, get words() { return words.map(w => w.t); }, get juice() { return juice; }, give(t) { givePower(t, paddle.x); }
+  get px() { return paddle.x; }, get br() { return balls[0] ? balls[0].r : null; }, get hps() { return blocks.map(k => k.hp); }, get sparks() { return sparks.length; }, get words() { return words.map(w => w.t); }, get juice() { return juice; }, get mp() { return mp && { host: mp.host, live: mp.live, cd: mp.cd, code: mp.code, players: mp.players.map(p => p.name + ':' + (p.alive ? p.lives : 'out')) }; }, get cells() { return blocks.map(k => k.r + ',' + k.c); }, give(t) { givePower(t, paddle.x); }
 };
 requestAnimationFrame(frame);
 })();
