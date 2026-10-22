@@ -4,12 +4,15 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Overview
 
-Jelly Breaker is a mobile-first block breaker where bricks, paddle and ball are soft bodies. The entire game — HTML, CSS and JS — lives in one self-contained `index.html`. There is no build step, no package.json, no dependencies, no tests and no linter. The only external resources are the Fredoka font from Google Fonts and PeerJS (`PEER_JS`, unpkg), which is lazy-loaded only when a player opens multiplayer. Keep it a single file with no dependencies unless asked otherwise.
+Jelly Breaker is a mobile-first block breaker where bricks, paddle and ball are soft bodies. The entire game — HTML, CSS and JS — lives in one self-contained `index.html`, plus the bundled Fredoka font `fonts/fredoka-latin.woff2`. The game itself has no dependencies, tests or linter; the only external resource is PeerJS (`PEER_JS`, unpkg), lazy-loaded only when a player opens multiplayer. Keep the game a single file with no dependencies unless asked otherwise.
+
+It also ships as iOS/Android apps via Capacitor (app id `dev.confusedgame.jellybreaker`): `package.json` exists only for Capacitor, and `npm run build` copies `index.html` + `fonts/` into `www/` (gitignored), which is what Capacitor and Vercel (`vercel.json`) serve. `android/` and `ios/` are generated Capacitor projects; don't hand-edit web assets there. In the apps, `NATIVE` is true and `PLUG` holds the Capacitor plugins (Haptics for `buzz()`, StatusBar, App for the Android back button).
 
 ## Commands
 
 - Run locally: `npx serve .` (or open `index.html` directly in a browser)
 - Deploy: static hosting on Vercel (https://jelly-breaker.vercel.app); `.vercel/` is gitignored
+- Mobile: `npm run build && npx cap sync`; every push to `main` runs `.github/workflows/mobile.yml` (signed `.ipa` → TestFlight, `.aab` → Play internal track, artifacts; GitHub Release on `v*` tags). Bump `version` in `package.json` for a new store version
 
 For automated checks in a browser, the game exposes a debug hook `window.__jelly`: getters `state`, `score`, `blocks`, `balls`, `lives`, `level`, `bx`/`br` (first ball's x/radius), `px` (pad x), `hps` (brick HP list), `gun`, `megaTier`, `sticky`, `pads`, `stuck`, `drops`, `panel`, `sparks` (count), `words` (active comic words), `juice`, `mp` (match summary or null), `cells` (brick `r,c` list), plus `give(type)` to grant a power-up instantly. The in-game Pause → Debug menu also jumps levels, spawns power-ups and adds lives.
 
@@ -33,7 +36,7 @@ Code is split into sections marked `/* ---------- name ---------- */` comments: 
 - **Input:** a quick tap (<250ms, <12px) on the canvas fires the gun; any pointer-up releases stuck balls. The mouse wheel moves `targetX` and sets `wheelLock`, which ignores hover steering until the mouse moves ~40px.
 - **Audio:** all Web Audio synthesis, no files. `audioInit()` builds `master` → `musicBus`/`sfxBus`; `tone()` and `noise()` are the primitives, `sfx.*` are the effects (pitch follows `combo` on a pentatonic scale), and `schedule()`/`playStep()` run a look-ahead music sequencer. The AudioContext is created on first user gesture and suspended/resumed with pause and page visibility.
 - **Persistence:** `localStorage` keys `jellybreaker.best`, `jellybreaker.muted`, `jellybreaker.levels`, `jellybreaker.order`, `jellybreaker.name`, always accessed inside `try/catch`.
-- **Mobile:** scrolling, zoom, gestures and context menu are blocked; `buzz()` triggers haptics where `navigator.vibrate` exists; layout uses safe-area insets.
+- **Mobile:** scrolling, zoom, gestures and context menu are blocked; `buzz()` triggers Capacitor Haptics in the apps and `navigator.vibrate` in browsers; layout uses safe-area insets.
 
 ## Code style
 

@@ -10,10 +10,9 @@
 <meta name="description" content="A block breaker where everything is made of jelly.">
 <title>Jelly Breaker</title>
 <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect x='3' y='8' width='26' height='16' rx='7' fill='%23ff4f8c'/%3E%3Cpath d='M9 13h10' stroke='%23fff' stroke-opacity='.6' stroke-width='3' stroke-linecap='round'/%3E%3C/svg%3E">
-<link rel="preconnect" href="https://fonts.googleapis.com">
-<link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
-<link href="https://fonts.googleapis.com/css2?family=Fredoka:wght@500;600;700&display=swap" rel="stylesheet">
+<link rel="preload" href="fonts/fredoka-latin.woff2" as="font" type="font/woff2" crossorigin>
 <style>
+@font-face{font-family:'Fredoka';font-weight:300 700;font-display:swap;src:url(fonts/fredoka-latin.woff2) format('woff2')}
 :root{--ink:#fff5fb;--pink:#ff4f8c;--plum:#1d0d3a;--font:'Fredoka',ui-rounded,'Hiragino Maru Gothic ProN','Arial Rounded MT Bold',system-ui,sans-serif}
 *{box-sizing:border-box;-webkit-tap-highlight-color:transparent}
 html,body{height:100%;margin:0;background:var(--plum);overflow:hidden;overscroll-behavior:none;touch-action:none;
@@ -374,7 +373,8 @@ function hud() {
   hudScore = score;
   $('score').textContent = score; $('level').textContent = level; $('lives').innerHTML = '<i></i>'.repeat(Math.max(0, lives));
 }
-const buzz = ms => { try { navigator.vibrate && navigator.vibrate(ms); } catch (e) {} };
+const CAP = window.Capacitor, NATIVE = !!(CAP && CAP.isNativePlatform && CAP.isNativePlatform()), PLUG = (CAP && CAP.Plugins) || {};
+const buzz = ms => { try { if (NATIVE && PLUG.Haptics) PLUG.Haptics.impact({ style: ms > 30 ? 'HEAVY' : ms > 12 ? 'MEDIUM' : 'LIGHT' }); else navigator.vibrate && navigator.vibrate(ms); } catch (e) {} };
 
 /* ---------- physics ---------- */
 function pads() { // main pad, plus the twin sliding out beside it
@@ -958,7 +958,7 @@ async function mpGo(a) {
   mpBusy = false; lobbyUI();
 }
 function mpShare() {
-  const url = `${location.origin}${location.pathname}?room=${mp.code}`, done = t => msg('mpMsg', t);
+  const url = `${NATIVE ? 'https://jelly-breaker.vercel.app/' : location.origin + location.pathname}?room=${mp.code}`, done = t => msg('mpMsg', t);
   const copy = () => { try { navigator.clipboard.writeText(url).then(() => done('Invite link copied'), () => done(url)); } catch (e) { done(url); } };
   if (navigator.share && matchMedia('(pointer:coarse)').matches) navigator.share({ text: 'Join my Jelly Breaker match', url }).then(() => done('Shared'), copy); else copy();
 }
@@ -1172,6 +1172,10 @@ window.__jelly = {
   get stuck() { return balls.filter(b => b.stuck).length; }, get drops() { return drops.length; }, get panel() { return panel; },
   get px() { return paddle.x; }, get br() { return balls[0] ? balls[0].r : null; }, get hps() { return blocks.map(k => k.hp); }, get sparks() { return sparks.length; }, get words() { return words.map(w => w.t); }, get juice() { return juice; }, get mp() { return mp && { host: mp.host, live: mp.live, cd: mp.cd, code: mp.code, players: mp.players.map(p => p.name + ':' + (p.alive ? p.lives : 'out')) }; }, get cells() { return blocks.map(k => k.r + ',' + k.c); }, give(t) { givePower(t, paddle.x); }
 };
+if (NATIVE) try { // app shell: dark status bar, Android back button behaves like Escape
+  PLUG.StatusBar && PLUG.StatusBar.setStyle({ style: 'DARK' }).catch(() => {});
+  PLUG.App && PLUG.App.addListener('backButton', () => { if (menuOpen() || (ov.classList.contains('show') && panel !== 'pMain')) back(); else if (state === 'play' || state === 'ready' || state === 'clear') pause(); else PLUG.App.exitApp(); });
+} catch (e) {}
 requestAnimationFrame(frame);
 })();
 </script>

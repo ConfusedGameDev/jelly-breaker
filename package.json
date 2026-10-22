@@ -1,0 +1,26 @@
+{
+  "name": "jelly-breaker",
+  "version": "1.0.0",
+  "private": true,
+  "description": "A block breaker where everything is made of jelly",
+  "scripts": {
+    "build": "node -e \"const f=require('fs');f.rmSync('www',{recursive:true,force:true});f.mkdirSync('www');f.cpSync('index.html','www/index.html');f.cpSync('fonts','www/fonts',{recursive:true})\"",
+    "start": "npx serve ."
+  },
+  "dependencies": {
+    "@capacitor/app": "^8.1.2",
+    "@capacitor/core": "^8.5.3",
+    "@capacitor/haptics": "^8.0.2",
+    "@capacitor/status-bar": "^8.0.4"
+  },
+  "devDependencies": {
+    "@capacitor/android": "^8.5.3",
+    "@capacitor/assets": "^3.0.5",
+    "@capacitor/cli": "^8.5.3",
+    "@capacitor/ios": "^8.5.3",
+    "typescript": "^7.0.2"
+  },
+  "allowScripts": {
+    "sharp@0.32.6": true
+  }
+}

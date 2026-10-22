@@ -25,15 +25,19 @@ Pause → Debug → Level designer lets you paint levels on a 7×10 grid, save t
 - Six level layouts that loop with tougher bricks and a faster ball
 - Wide-paddle and multiball power-ups, two-hit bricks, combo scoring, saved best score
 - Music and sound effects synthesized live with the Web Audio API (no audio files)
-- Mobile first: locked scrolling and zoom, safe-area aware, haptics on Android
+- Mobile first: locked scrolling and zoom, safe-area aware, haptics (native in the iOS/Android apps)
 
 ## Project layout
 
-Everything lives in a single self-contained `index.html` (no build step, no dependencies). Open it in a browser or serve the folder with any static server:
+The game lives in a single self-contained `index.html` plus its bundled font in `fonts/` (no dependencies). Open it in a browser or serve the folder with any static server:
 
 ```sh
 npx serve .
 ```
+
+## Mobile apps
+
+The same `index.html` ships as iOS and Android apps through [Capacitor](https://capacitorjs.com). `npm run build` stages the web files in `www/`; `npx cap sync` copies them into `android/` and `ios/`. Every push to `main` builds signed apps in GitHub Actions (`Mobile builds`), uploads iOS to TestFlight and Android to the Google Play internal testing track, and attaches `.apk`/`.aab`/`.ipa` to a GitHub Release when a `v*` tag is pushed.
 
 ## Deploying
 
