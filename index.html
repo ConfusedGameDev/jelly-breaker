@@ -19,10 +19,11 @@ html,body{height:100%;margin:0;background:var(--plum);overflow:hidden;overscroll
   -webkit-user-select:none;user-select:none;-webkit-touch-callout:none;font-family:var(--font);color:var(--ink)}
 canvas{position:fixed;inset:0;width:100%;height:100%;display:block;touch-action:none}
 #stage{position:fixed;pointer-events:none}
-#hud{position:absolute;left:0;right:0;top:0;display:flex;align-items:center;gap:10px;
+#hud{position:absolute;left:0;right:0;top:0;display:flex;align-items:center;gap:8px;
   padding:max(8px,env(safe-area-inset-top)) 12px 0;height:calc(max(8px,env(safe-area-inset-top)) + 38px)}
 .stat{display:flex;flex-direction:column;line-height:1;min-width:58px}
 .stat span{font-size:10px;font-weight:600;letter-spacing:.12em;text-transform:uppercase;opacity:.55}
+#comboS{min-width:0;opacity:.35;transition:opacity .2s}#comboS.on{opacity:1}#comboS.fire b{color:#ffb03b;text-shadow:0 0 8px #ff5a1f}
 .stat b{font-size:20px;font-weight:700;margin-top:2px;font-variant-numeric:tabular-nums;transform-origin:left center}
 #lives{display:flex;gap:5px;margin-left:auto}
 #lives i{width:11px;height:11px;border-radius:50%;background:var(--pink);box-shadow:inset 0 -2px 0 rgba(0,0,0,.2),inset 0 2px 0 rgba(255,255,255,.45)}
@@ -90,6 +91,7 @@ textarea{width:100%;font:12px ui-monospace,Menlo,Consolas,monospace;resize:verti
   <div id="hud">
     <div class="stat"><span>Score</span><b id="score">0</b></div>
     <div class="stat"><span>Level</span><b id="level">1</b></div>
+    <div class="stat" id="comboS"><span>Combo</span><b id="combo">x0</b></div>
     <div id="lives"></div>
     <button class="ib" id="bMute" aria-label="Toggle sound"><svg viewBox="0 0 24 24"><path d="M4 9v6h4l5 4V5L8 9H4zm12.5 3a4 4 0 0 0-2-3.5v7a4 4 0 0 0 2-3.5zM14.5 4.3v2.1a6 6 0 0 1 0 11.2v2.1a8 8 0 0 0 0-15.4z"/></svg></button>
     <button class="ib" id="bPause" aria-label="Pause"><svg viewBox="0 0 24 24"><rect x="6" y="5" width="4.5" height="14" rx="1.5"/><rect x="13.5" y="5" width="4.5" height="14" rx="1.5"/></svg></button>
@@ -266,6 +268,7 @@ class Jelly {
 /* ---------- game state ---------- */
 const PAL = [['#ff4f79', '#c2264f'], ['#ff9f43', '#c96a12'], ['#ffd93d', '#c79c0a'], ['#7bed6f', '#3fae35'], ['#3ddbd9', '#1a9c9a'], ['#5b8cff', '#2f5bd0'], ['#b06bff', '#7a39cc']];
 const REGEN_COL = ['#5cf2a5', '#1f9e62'];
+const PTS = [50, 40, 30, 25, 20, 15, 10], SPECIAL_PTS = 50, FIRE = 10; // base points per PAL row colour; specials add SPECIAL_PTS; FIRE = combo that lights the ball
 // level grids: '.' empty, 1-3 hit points, R row-clear, C column-clear, B bomb (3x3), H regenerating (3 HP)
 const LEVELS = [
   ['1111111', '1111111', '1111111', '1111111'],
@@ -296,12 +299,12 @@ const paddle = { x: W / 2, y: 544, w: 76, h: 16, tw: 76, wide: 0, twin: 0, split
 paddle.j = new Jelly(paddle.x, paddle.y, paddle.w, paddle.h, 8, 2, 1300, 18, 900); paddle.j.always = true; paddle.j.awake = true;
 paddle.tj = new Jelly(paddle.x, paddle.y, paddle.w, paddle.h, 8, 2, 1300, 18, 900); paddle.tj.always = true; paddle.tj.awake = true;
 let state = 'menu', prevState = 'ready', score = 0, lives = 3, level = 1, combo = 0, best = 0;
-let blocks = [], balls = [], drops = [], parts = [], rings = [], texts = [], shots = [], fx = [], beams = [], sparks = [], flashes = [], words = [];
+let blocks = [], balls = [], drops = [], parts = [], flames = [], rings = [], texts = [], shots = [], fx = [], beams = [], sparks = [], flashes = [], words = [];
 let targetX = W / 2, shake = 0, kx = 0, ky = 0, juice = true, clearT = 0, time = 0, ambT = 0, keyL = false, keyR = false, muted = false;
 let gun = 0, gunTier = 0, sticky = 0, mega = 0, megaTier = 0, mp = null, myName = 'Jelly' + Math.floor(rnd(10, 99));
 try { best = +localStorage.getItem('jellybreaker.best') || 0; muted = localStorage.getItem('jellybreaker.muted') === '1'; myName = localStorage.getItem('jellybreaker.name') || myName; } catch (e) {}
 const speed = () => Math.min(480, 320 + (level - 1) * 20);
-const aim = () => Math.sin(time * 2.2); // sticky launch angle, swings left <-> right
+const aim = b => clamp(b.stuck.off / (paddle.w / 2), -1, 1) * 1.05; // stuck ball leaves like a normal pad bounce from that spot
 
 function buildLevel() {
   blocks = []; drops = []; shots = []; fx = []; beams = [];
@@ -315,7 +318,7 @@ function buildLevel() {
 function mkBlock(r, c, type, hp, col, delay, drop) {
   const x = 10 + BW / 2 + c * (BW + GAP), y = CEIL + 24 + BH / 2 + r * (BH + GAP), j = new Jelly(x, y, BW, BH, 4, 2, 420, 7, 500);
   for (const p of j.pts) p.y -= drop; j.awake = true; // drop in and wobble to rest
-  return { x, y, hw: BW / 2, hh: BH / 2, hp, maxHp: hp, type, r, c, regenT: 0, heal: 0, col, flash: 0, delay, j };
+  return { x, y, hw: BW / 2, hh: BH / 2, hp, maxHp: hp, type, r, c, regenT: 0, heal: 0, col, flash: 0, delay, j, pts: PTS[r % PTS.length] + (type === 'n' ? 0 : SPECIAL_PTS) };
 }
 function addGarbage() { // a rival broke a brick: drop one into the highest free cell, or harden a brick if the field is full
   const free = [];
@@ -324,7 +327,7 @@ function addGarbage() { // a rival broke a brick: drop one into the highest free
     const x = 10 + BW / 2 + c * (BW + GAP), y = CEIL + 24 + BH / 2 + r * (BH + GAP);
     if (!balls.some(b => Math.abs(b.x - x) < BW / 2 + b.r + 4 && Math.abs(b.y - y) < BH / 2 + b.r + 4)) free.push([r, c]);
   }
-  if (free.length) { const [r, c] = free[Math.floor(Math.random() * free.length)]; blocks.push(mkBlock(r, c, 'n', 1, GARB, 0, 40)); sfx.heal(); return; }
+  if (free.length) { const [r, c] = free[Math.floor(Math.random() * free.length)]; const k = mkBlock(r, c, 'n', 1, GARB, 0, 40); k.garb = true; k.pts = Math.ceil(k.pts / 4); blocks.push(k); sfx.heal(); return; }
   const H2 = blocks.filter(k => !k.dead && k.hp < 3); if (!H2.length) return;
   const k = H2[Math.floor(Math.random() * H2.length)]; k.hp++; k.maxHp = Math.max(k.maxHp, k.hp); k.heal = 1; k.j.impulse(k.x, k.y - k.hh, 0, 1, 160, 30);
 }
@@ -338,7 +341,7 @@ function launch() {
 }
 function releaseStuck() {
   let n = 0;
-  for (const b of balls) if (b.stuck) { b.stuck = null; launchBall(b, aim()); n++; }
+  for (const b of balls) if (b.stuck) { launchBall(b, aim(b)); b.stuck = null; n++; }
   if (n) sfx.launch();
 }
 function clearPowers() {
@@ -346,7 +349,7 @@ function clearPowers() {
 }
 function startGame() {
   audioInit(); score = 0; lives = 3; level = 1; clearPowers();
-  parts = []; rings = []; texts = []; beams = []; sparks = []; flashes = []; words = [];
+  parts = []; flames = []; rings = []; texts = []; beams = []; sparks = []; flashes = []; words = [];
   buildLevel(); resetBall(); hud(); ov.classList.remove('show');
 }
 function gameOver() {
@@ -366,9 +369,10 @@ function pause() {
   if (AU.ctx) AU.ctx.suspend();
 }
 function resume() { if (state !== 'paused') return ov.classList.remove('show'); state = prevState; ov.classList.remove('show'); if (AU.ctx) AU.ctx.resume(); }
-let hudKey = '', hudScore = 0;
+let hudKey = '', hudScore = 0, hudCombo = -1;
 function hud() {
-  const k = score + '|' + level + '|' + lives; if (k === hudKey) return; hudKey = k;
+  const k = score + '|' + level + '|' + lives + '|' + combo; if (k === hudKey) return; hudKey = k;
+  const cs = $('comboS'); if (combo !== hudCombo) { cs.classList.toggle('on', combo > 1); cs.classList.toggle('fire', combo >= FIRE); if (juice && combo > hudCombo) try { $('combo').animate([{ transform: 'scale(1.5)' }, { transform: 'scale(1)' }], { duration: 200, easing: 'cubic-bezier(.3,1.6,.5,1)' }); } catch (e) {} hudCombo = combo; $('combo').textContent = 'x' + combo; }
   if (juice && score > hudScore) try { $('score').animate([{ transform: 'scale(1.35)' }, { transform: 'scale(1)' }], { duration: 220, easing: 'cubic-bezier(.3,1.6,.5,1)' }); } catch (e) {}
   hudScore = score;
   $('score').textContent = score; $('level').textContent = level; $('lives').innerHTML = '<i></i>'.repeat(Math.max(0, lives));
@@ -416,11 +420,12 @@ function hitBlock(k, hx, hy, ivx, ivy) {
     if (d < 110 && d > 0) o.j.impulse(hx, hy, ex / d, ey / d, 230 * (1 - d / 110), 80);
   }
   if (k.hp <= 0) killBlock(k);
-  else { score += 5; sfx.boing(combo); buzz(6); }
+  else { score += 5 * combo; sfx.boing(combo); buzz(6); }
 }
 function killBlock(k) {
-  k.dead = true; const pts = 10 * clamp(combo, 1, 10); score += pts;
-  texts.push({ x: k.x, y: k.y, t: '+' + pts, life: .7 });
+  k.dead = true; const pts = k.pts * Math.max(1, combo); score += pts;
+  texts.push({ x: k.x, y: k.y, t: '+' + pts + (combo > 1 ? ' x' + combo : ''), life: .7 });
+  if (combo === FIRE) word(k.x, k.y - 22, 'ON FIRE!', '#ffb03b', 1.3);
   burst(k); sfx.pop(combo); shake = Math.min(6, shake + 2.4); buzz(12);
   if (combo >= 5 && combo % 5 === 0) word(k.x, k.y - 22, 'COMBO x' + combo, '#ffd93d', 1.15);
   else if (combo >= 3 && Math.random() < .35) word(k.x, k.y - 22, WORDS[Math.floor(Math.random() * WORDS.length)], k.col[0]);
@@ -440,7 +445,7 @@ function givePower(type, x) {
   if (type === 'wide') { paddle.tw = 114; paddle.wide = 12; t = 'WIDE!'; }
   else if (type === 'multi') {
     for (const b of balls.slice()) {
-      let vx = b.vx, vy = b.vy; if (b.stuck) { const sp = speed(), a = aim(); vx = sp * Math.sin(a); vy = -sp * Math.cos(a); }
+      let vx = b.vx, vy = b.vy; if (b.stuck) { const sp = speed(), a = aim(b); vx = sp * Math.sin(a); vy = -sp * Math.cos(a); }
       for (const a of [-.45, .45]) {
         if (balls.length >= 7) break;
         const c = Math.cos(a), s = Math.sin(a), nb = newBall(b.x, b.y, vx * c - vy * s, vx * s + vy * c); nb.r = b.r; balls.push(nb);
@@ -522,6 +527,7 @@ function update(dt) {
       if (b.stuck) { b.x = (P[b.stuck.p] || P[0]).x + b.stuck.off; b.y = paddle.y - paddle.h / 2 - b.r; continue; }
       stepBall(b, dt);
       b.tt += dt; if (b.tt > .016) { b.tt = 0; b.trail.push(b.x, b.y); if (b.trail.length > 14) b.trail.splice(0, 2); }
+      if (combo >= FIRE && !b.stuck && flames.length < 160) for (let i = 0; i < 2; i++) flames.push({ x: b.x + rnd(-.6, .6) * b.r, y: b.y + rnd(-.6, .6) * b.r, vx: -b.vx * .08 + rnd(-30, 30), vy: -b.vy * .08 + rnd(-60, -10), r: b.r * rnd(.6, 1.1), life: rnd(.25, .45) });
     }
     const nb = balls.length; balls = balls.filter(b => b.y < H + 30);
     if (mp && mp.live && balls.length < nb) mpUp({ t: 'send', kind: 'ball', n: nb - balls.length });
@@ -540,7 +546,9 @@ function update(dt) {
     for (const f of fx) if ((f.t -= dt) <= 0) { f.done = true; special(f.k); }
     fx = fx.filter(f => !f.done);
     blocks = blocks.filter(k => !k.dead);
-    if (!blocks.length) {
+    if (mp && mp.live && !mp.won && !blocks.some(k => !k.garb)) { mp.won = true; mpUp({ t: 'clear' }); } // own bricks gone: wins even with rival bricks left
+    if (mp && mp.won) {} // waiting for the host's win
+    else if (!blocks.length) {
       state = 'clear'; clearT = 1.7; balls = []; drops = []; shots = []; fx = []; score += 100 * level; sfx.clear(); buzz(40);
     } else if (!balls.length) {
       lives--; sfx.lose(); buzz(60); shake = 8; clearPowers(); drops = []; word(paddle.x, paddle.y - 50, 'OOF!', '#ff4f79', 1.4);
@@ -564,6 +572,7 @@ function update(dt) {
       texts.push({ x: k.x, y: k.y - 14, t: '+1', life: .6 });
     }
   }
+  for (const f of flames) { f.x += f.vx * dt; f.y += f.vy * dt; f.vy -= 120 * dt; f.life -= dt; } flames = flames.filter(f => f.life > 0);
   for (const p of parts) { p.vy += 720 * dt; p.x += p.vx * dt; p.y += p.vy * dt; p.life -= dt; }
   parts = parts.filter(p => p.life > 0);
   for (const r of rings) { r.r += (r.v || 130) * dt; r.life -= dt; } rings = rings.filter(r => r.life > 0);
@@ -652,21 +661,22 @@ function render() {
     if (sticky > 0) { pj.path(); g.strokeStyle = `rgba(123,237,111,${.75 + .25 * Math.sin(time * 6)})`; g.lineWidth = 3.5; g.stroke(); }
     pj.gloss(.6); g.restore();
   }
-  // balls
+  // balls (on fire past a FIRE combo: additive flames, hot trail and core)
+  const fire = combo >= FIRE;
+  if (flames.length) {
+    g.globalCompositeOperation = 'lighter';
+    for (const f of flames) { const t = f.life / .45; g.globalAlpha = Math.min(1, t * 1.6) * .7; g.beginPath(); g.arc(f.x, f.y, f.r * (.4 + .6 * t), 0, 6.283); g.fillStyle = t > .6 ? '#ffd23f' : t > .3 ? '#ff7a1f' : '#d8261c'; g.fill(); }
+    g.globalCompositeOperation = 'source-over'; g.globalAlpha = 1;
+  }
   for (const b of balls) {
     const n = b.trail.length / 2;
-    for (let i = 0; i < n; i++) { g.globalAlpha = (i + 1) / n * .22; g.beginPath(); g.arc(b.trail[i * 2], b.trail[i * 2 + 1], b.r * (.4 + .6 * (i + 1) / n), 0, 6.283); g.fillStyle = '#fff1b8'; g.fill(); }
+    for (let i = 0; i < n; i++) { g.globalAlpha = (i + 1) / n * (fire ? .35 : .22); g.beginPath(); g.arc(b.trail[i * 2], b.trail[i * 2 + 1], b.r * (.4 + .6 * (i + 1) / n), 0, 6.283); g.fillStyle = fire ? '#ff8a2a' : '#fff1b8'; g.fill(); }
     g.globalAlpha = 1;
+    if (fire) { const gl = g.createRadialGradient(b.x, b.y, b.r * .5, b.x, b.y, b.r * 2.6); gl.addColorStop(0, 'rgba(255,170,40,.55)'); gl.addColorStop(1, 'rgba(255,60,20,0)'); g.fillStyle = gl; g.beginPath(); g.arc(b.x, b.y, b.r * 2.6, 0, 6.283); g.fill(); }
     g.save(); g.translate(b.x, b.y); g.rotate(Math.atan2(b.ay, b.ax)); g.scale(b.s, 1 / b.s);
-    g.beginPath(); g.arc(0, 0, b.r, 0, 6.283); g.fillStyle = '#fff4c9'; g.fill(); g.lineWidth = 1.6; g.strokeStyle = '#e0b84a'; g.stroke();
+    g.beginPath(); g.arc(0, 0, b.r, 0, 6.283); g.fillStyle = fire ? '#ffe08a' : '#fff4c9'; g.fill(); g.lineWidth = 1.6; g.strokeStyle = fire ? '#ff6a1f' : '#e0b84a'; g.stroke();
     g.restore();
     g.beginPath(); g.arc(b.x - b.r * .29, b.y - b.r * .36, 2 * b.r / 7, 0, 6.283); g.fillStyle = 'rgba(255,255,255,.9)'; g.fill();
-    if (b.stuck) { // swinging aim arrow
-      const a = aim(), ex = b.x + Math.sin(a) * (b.r + 70), ey = b.y - Math.cos(a) * (b.r + 70);
-      g.setLineDash([3, 6]); g.beginPath(); g.moveTo(b.x + Math.sin(a) * (b.r + 4), b.y - Math.cos(a) * (b.r + 4)); g.lineTo(ex, ey);
-      g.strokeStyle = 'rgba(255,255,255,.8)'; g.lineWidth = 2.5; g.lineCap = 'round'; g.stroke(); g.setLineDash([]);
-      g.beginPath(); g.arc(ex, ey, 4, 0, 6.283); g.fillStyle = '#fff'; g.fill();
-    }
   }
   g.textAlign = 'center'; g.textBaseline = 'middle';
   for (const t of texts) { g.globalAlpha = Math.min(1, t.life * 2.5); g.font = `700 14px ${FONT}`; g.fillStyle = '#fff'; g.fillText(t.t, t.x, t.y); }
@@ -813,7 +823,7 @@ function back() {
   else if (panel === 'pMulti') quit();
 }
 function quit() {
-  mpLeave(); testMap = null; level = 1; clearPowers(); balls = []; parts = []; texts = []; sparks = []; flashes = []; words = []; buildLevel(); hud();
+  mpLeave(); testMap = null; level = 1; clearPowers(); balls = []; parts = []; flames = []; texts = []; sparks = []; flashes = []; words = []; buildLevel(); hud();
   state = 'menu'; showOv('Jelly<br>Breaker', 'Wobbly bricks, a squishy ball, one thumb.', 'Tap to play');
   if (AU.ctx) AU.ctx.resume();
 }
@@ -881,6 +891,7 @@ function hostMsg(d, c) { // c is null for the host's own messages
     for (const id in n) deliver(id, { t: 'get', kind: d.kind === 'ball' ? 'ball' : 'brick', n: n[id], from: p.name });
   } else if (d.t === 'stat') { p.lives = d.lives | 0; p.blocks = d.blocks | 0; lobbySync(); }
   else if (d.t === 'dead') { p.alive = false; p.lives = 0; checkWin(); lobbySync(); }
+  else if (d.t === 'clear' && mp.live && p.alive) { mp.live = false; bc({ t: 'win', id: p.id, name: p.name, clear: true }); }
 }
 function lobbySync() { if (!mp || !mp.host) return; if (!mp.live && mp.players.length < 2) mp.cd = 0; bc({ t: 'lobby', players: mp.players, cd: mp.cd }); }
 function bc(m) { for (const c of mp.conns.values()) if (c.open) c.send(m); onMsg(m); }
@@ -893,7 +904,7 @@ function checkWin() {
 function onMsg(d) {
   if (!mp) return;
   if (d.t === 'lobby') { mp.players = d.players; if (!mp.host) mp.cd = d.cd; lobbyUI(); }
-  else if (d.t === 'go') { mp.live = true; testMap = null; startGame(); }
+  else if (d.t === 'go') { mp.live = true; mp.won = false; testMap = null; startGame(); }
   else if (d.t === 'get' && mp.live) {
     if (d.kind === 'ball') { mp.pb += d.n; word(paddle.x, paddle.y - 60, d.n > 1 ? `+${d.n} BALLS!` : 'BONUS BALL!', '#7bed6f'); }
     else { mp.pk += d.n; texts.push({ x: W / 2, y: CEIL + 14, t: `+${d.n} brick${d.n > 1 ? 's' : ''} from ${d.from}`, life: 1 }); }
@@ -901,7 +912,7 @@ function onMsg(d) {
     const me = d.id === mp.me; mp.live = false; mpLeave(); state = 'over'; balls = []; drops = []; shots = [];
     if (me) { sfx.clear(); buzz(40); }
     if (score > best) { best = score; try { localStorage.setItem('jellybreaker.best', best); } catch (e) {} }
-    showOv(me ? 'You<br>win!' : d.id ? 'Game<br>over' : 'Draw', me ? 'Last jelly standing!' : d.id ? `${d.name} is the last jelly standing` : 'Nobody survived', 'Play solo');
+    showOv(me ? 'You<br>win!' : d.id ? 'Game<br>over' : 'Draw', me ? (d.clear ? 'Board cleared!' : 'Last jelly standing!') : d.id ? (d.clear ? `${d.name} cleared their board` : `${d.name} is the last jelly standing`) : 'Nobody survived', 'Play solo');
   }
 }
 function mpTick(dt) {
@@ -1170,7 +1181,7 @@ window.__jelly = {
   get state() { return state; }, get score() { return score; }, get blocks() { return blocks.length; }, get balls() { return balls.length; }, get lives() { return lives; }, get level() { return level; },
   get bx() { return balls[0] ? balls[0].x : null; }, get gun() { return gun; }, get megaTier() { return megaTier; }, get sticky() { return sticky; }, get pads() { return pads().length; },
   get stuck() { return balls.filter(b => b.stuck).length; }, get drops() { return drops.length; }, get panel() { return panel; },
-  get px() { return paddle.x; }, get br() { return balls[0] ? balls[0].r : null; }, get hps() { return blocks.map(k => k.hp); }, get sparks() { return sparks.length; }, get words() { return words.map(w => w.t); }, get juice() { return juice; }, get mp() { return mp && { host: mp.host, live: mp.live, cd: mp.cd, code: mp.code, players: mp.players.map(p => p.name + ':' + (p.alive ? p.lives : 'out')) }; }, get cells() { return blocks.map(k => k.r + ',' + k.c); }, give(t) { givePower(t, paddle.x); }
+  get px() { return paddle.x; }, get br() { return balls[0] ? balls[0].r : null; }, get hps() { return blocks.map(k => k.hp); }, get sparks() { return sparks.length; }, get words() { return words.map(w => w.t); }, get juice() { return juice; }, get mp() { return mp && { host: mp.host, live: mp.live, cd: mp.cd, code: mp.code, players: mp.players.map(p => p.name + ':' + (p.alive ? p.lives : 'out')) }; }, get cells() { return blocks.map(k => k.r + ',' + k.c); }, give(t) { givePower(t, paddle.x); }, get combo() { return combo; }, get flames() { return flames.length; }, get garb() { return blocks.filter(k => k.garb).length; }, wipe(n = 99) { for (const k of blocks.filter(k => !k.garb && !k.dead).slice(0, n)) while (!k.dead) hitBlock(k, k.x, k.y + k.hh, 0, -1); }
 };
 if (NATIVE) try { // app shell: dark status bar, Android back button behaves like Escape
   PLUG.StatusBar && PLUG.StatusBar.setStyle({ style: 'DARK' }).catch(() => {});

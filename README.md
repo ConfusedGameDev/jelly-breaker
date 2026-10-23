@@ -13,7 +13,8 @@ A block breaker where everything is made of jelly. Bricks and the paddle are sof
 ## Bricks and power-ups
 
 - Bricks: 1–3 hit, row-clear ↔, column-clear ↕, bomb ✸ (3×3, chains), regen ✚ (3 hits, heals if left alone for 3s)
-- Power-ups: Wide, Multi, Twin pad, Gun (3 → 5 → 10 shots as you stack it), Sticky (catch the ball, launch along the swinging arrow), Mega ball (2x → 3x → 4x)
+- Scoring: brick colours are worth different points (top rows more), special bricks give a bonus and rival bricks a quarter. Every consecutive brick hit raises the combo multiplier (shown in the HUD, reset when the ball touches the paddle); at x10 the ball catches fire.
+- Power-ups: Wide, Multi, Twin pad, Gun (3 → 5 → 10 shots as you stack it), Sticky (catch the ball on the paddle, release to launch it from where it sits), Mega ball (2x → 3x → 4x)
 
 ## Level designer
 
