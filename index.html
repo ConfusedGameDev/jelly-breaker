@@ -369,13 +369,19 @@ function pause() {
   if (AU.ctx) AU.ctx.suspend();
 }
 function resume() { if (state !== 'paused') return ov.classList.remove('show'); state = prevState; ov.classList.remove('show'); if (AU.ctx) AU.ctx.resume(); }
-let hudKey = '', hudScore = 0, hudCombo = -1;
+let hudKey = '', hudCombo = -1, shown = 0, shownTxt = '';
+function tickScore(dt) { // the score label counts up to score, then pops with a bouncy scale once it lands
+  if (score < shown || !juice) shown = score;
+  else if (shown < score) {
+    shown = Math.min(score, shown + Math.max(300 * dt, (score - shown) * 7 * dt));
+    if (shown >= score) try { $('score').animate([{ transform: 'scale(1)' }, { transform: 'scale(1.45)', offset: .25 }, { transform: 'scale(.88)', offset: .55 }, { transform: 'scale(1.08)', offset: .8 }, { transform: 'scale(1)' }], { duration: 420, easing: 'ease-out' }); } catch (e) {}
+  }
+  const t = String(Math.floor(shown)); if (t !== shownTxt) $('score').textContent = shownTxt = t;
+}
 function hud() {
   const k = score + '|' + level + '|' + lives + '|' + combo; if (k === hudKey) return; hudKey = k;
   const cs = $('comboS'); if (combo !== hudCombo) { cs.classList.toggle('on', combo > 1); cs.classList.toggle('fire', combo >= FIRE); if (juice && combo > hudCombo) try { $('combo').animate([{ transform: 'scale(1.5)' }, { transform: 'scale(1)' }], { duration: 200, easing: 'cubic-bezier(.3,1.6,.5,1)' }); } catch (e) {} hudCombo = combo; $('combo').textContent = 'x' + combo; }
-  if (juice && score > hudScore) try { $('score').animate([{ transform: 'scale(1.35)' }, { transform: 'scale(1)' }], { duration: 220, easing: 'cubic-bezier(.3,1.6,.5,1)' }); } catch (e) {}
-  hudScore = score;
-  $('score').textContent = score; $('level').textContent = level; $('lives').innerHTML = '<i></i>'.repeat(Math.max(0, lives));
+  $('level').textContent = level; $('lives').innerHTML = '<i></i>'.repeat(Math.max(0, lives));
 }
 const CAP = window.Capacitor, NATIVE = !!(CAP && CAP.isNativePlatform && CAP.isNativePlatform()), PLUG = (CAP && CAP.Plugins) || {};
 const buzz = ms => { try { if (NATIVE && PLUG.Haptics) PLUG.Haptics.impact({ style: ms > 30 ? 'HEAVY' : ms > 12 ? 'MEDIUM' : 'LIGHT' }); else navigator.vibrate && navigator.vibrate(ms); } catch (e) {} };
@@ -1172,13 +1178,13 @@ let last = 0, acc = 0;
 function frame(t) {
   const now = t / 1000, dt = Math.min(.05, now - last || 0); last = now;
   if (state !== 'paused') { acc += dt; while (acc >= STEP) { update(STEP); acc -= STEP; } }
-  render(); requestAnimationFrame(frame);
+  tickScore(dt); render(); requestAnimationFrame(frame);
 }
 resize(); setMute(muted); buildLevel(); hud();
 $('ovBest').textContent = best ? `Best ${best}` : '';
 { const r = new URLSearchParams(location.search).get('room'); if (r) { openMulti(); $('mpCode').value = r.toUpperCase().slice(0, 4); msg('mpMsg', 'Tap Join room to jump in'); } }
 window.__jelly = {
-  get state() { return state; }, get score() { return score; }, get blocks() { return blocks.length; }, get balls() { return balls.length; }, get lives() { return lives; }, get level() { return level; },
+  get state() { return state; }, get score() { return score; }, get shown() { return Math.floor(shown); }, get blocks() { return blocks.length; }, get balls() { return balls.length; }, get lives() { return lives; }, get level() { return level; },
   get bx() { return balls[0] ? balls[0].x : null; }, get gun() { return gun; }, get megaTier() { return megaTier; }, get sticky() { return sticky; }, get pads() { return pads().length; },
   get stuck() { return balls.filter(b => b.stuck).length; }, get drops() { return drops.length; }, get panel() { return panel; },
   get px() { return paddle.x; }, get br() { return balls[0] ? balls[0].r : null; }, get hps() { return blocks.map(k => k.hp); }, get sparks() { return sparks.length; }, get words() { return words.map(w => w.t); }, get juice() { return juice; }, get mp() { return mp && { host: mp.host, live: mp.live, cd: mp.cd, code: mp.code, players: mp.players.map(p => p.name + ':' + (p.alive ? p.lives : 'out')) }; }, get cells() { return blocks.map(k => k.r + ',' + k.c); }, give(t) { givePower(t, paddle.x); }, get combo() { return combo; }, get flames() { return flames.length; }, get garb() { return blocks.filter(k => k.garb).length; }, wipe(n = 99) { for (const k of blocks.filter(k => !k.garb && !k.dead).slice(0, n)) while (!k.dead) hitBlock(k, k.x, k.y + k.hh, 0, -1); }
