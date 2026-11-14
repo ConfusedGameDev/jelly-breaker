@@ -101,7 +101,8 @@ textarea{width:100%;font:12px ui-monospace,Menlo,Consolas,monospace;resize:verti
       <h1 id="ovTitle">Jelly<br>Breaker</h1>
       <p id="ovSub">Wobbly bricks, a squishy ball, one thumb.</p>
       <button id="ovBtn" tabindex="-1">Tap to play</button>
-      <button class="btn" data-a="multi" style="margin-top:18px">Multiplayer</button>
+      <button class="btn" data-a="mode" id="bMode" style="margin-top:18px">Rescue mode</button>
+      <button class="btn" data-a="multi">Multiplayer</button>
       <p id="ovBest"></p>
     </div>
     <div class="panel" id="pPause">
@@ -308,8 +309,84 @@ try { best = +localStorage.getItem('jellybreaker.best') || 0; muted = localStora
 const speed = () => Math.min(480, 320 + (level - 1) * 20);
 const aim = b => clamp(b.stuck.off / (paddle.w / 2), -1, 1) * 1.05; // stuck ball leaves like a normal pad bounce from that spot
 
+/* ---------- rescue mode: a fine grid of small bricks (1), indestructible metal (2) and ball bricks (3, free an extra ball); a ball has to reach the hero ---------- */
+const RS = 9, RC = 40, RR = 32, RN = RC * RR;
+// ops [v, x0, y0, x1, y1] over a brick field in a metal frame: 0 empty, 1 brick, 2 metal, 3 perforated metal (gaps hold ball bricks); hero [x in cells, row under the feet]
+const RESCUE = [
+  { hero: [5, 31], ops: [[2, 9, 22, 24, 22], [2, 9, 22, 9, 30], [2, 34, 10, 34, 30], [2, 24, 10, 24, 22], [3, 24, 10, 34, 10], [0, 10, 23, 33, 30], [0, 25, 11, 33, 22], [2, 22, 26, 22, 30], [0, 26, 31, 32, 31], [0, 2, 25, 7, 30]] },
+  { hero: [20, 9], ops: [[2, 2, 23, 37, 23], [2, 2, 8, 2, 30], [2, 37, 8, 37, 30], [2, 9, 8, 9, 23], [2, 30, 8, 30, 23], [3, 2, 8, 9, 8], [3, 30, 8, 37, 8], [0, 3, 24, 36, 30], [0, 3, 9, 8, 23], [0, 31, 9, 36, 23], [0, 3, 31, 8, 31], [0, 31, 31, 36, 31], [0, 17, 3, 22, 8]] },
+  { hero: [20, 18], ops: [[3, 1, 24, 38, 24], [0, 1, 25, 38, 30], [0, 17, 31, 22, 31], [3, 13, 7, 26, 7], [3, 13, 18, 26, 18], [3, 13, 7, 13, 18], [3, 26, 7, 26, 18], [0, 17, 12, 22, 17]] }
+];
+let rescue = false, rg = new Uint8Array(RN), rdx = new Float32Array(RN), rdy = new Float32Array(RN), rvx = new Float32Array(RN), rvy = new Float32Array(RN), rLeft = 0, rWin = false, rsT = 0;
+const rAct = new Set(); // cells whose wobble spring is still moving
+function buildRescue() {
+  const L = RESCUE[(level - 1) % RESCUE.length], put = (v, x0, y0, x1, y1) => { for (let y = y0; y <= y1; y++) for (let x = x0; x <= x1; x++) rg[y * RC + x] = v === 3 ? ((x + y) % 3 && !((x === x0 || x === x1) && (y === y0 || y === y1)) ? 3 : 2) : v; };
+  rg.fill(1); rdx.fill(0); rvx.fill(0); rvy.fill(0); rAct.clear(); rWin = false; rLeft = 0;
+  put(2, 0, 0, RC - 1, 0); put(2, 0, 0, 0, RR - 1); put(2, RC - 1, 0, RC - 1, RR - 1); put(2, 0, RR - 1, RC - 1, RR - 1);
+  for (const o of L.ops) put(...o);
+  for (let i = 0; i < RN; i++) if (rg[i]) { if (rg[i] === 1 && Math.random() < .05) rg[i] = 3; rdy[i] = -30 - (i / RC | 0) - (i % RC) * .5; rAct.add(i); if (rg[i] & 1) rLeft++; } // drop in
+  heroes = [{ r: -1, c: -1, x: L.hero[0] * RS, fr: L.hero[1], y: CEIL + 2 + L.hero[1] * RS }];
+}
+function rKick(c, r, ux, uy, m) { // wobble the cells around a hit
+  for (let y = Math.max(0, r - 2); y <= Math.min(RR - 1, r + 2); y++) for (let x = Math.max(0, c - 2); x <= Math.min(RC - 1, c + 2); x++) {
+    const i = y * RC + x; if (!rg[i]) continue;
+    const f = m / (1 + (x - c) * (x - c) + (y - r) * (y - r)) * (rg[i] === 2 ? .45 : 1); rvx[i] += ux * f; rvy[i] += uy * f; rAct.add(i);
+  }
+}
+function hitCell(c, r, hx, hy, ivx, ivy) {
+  const i = r * RC + c, sp = Math.hypot(ivx, ivy) || 1, dx = ivx / sp, dy = ivy / sp, snd = time - rsT > .04; if (snd) rsT = time;
+  if (rg[i] === 2) { rKick(c, r, dx, dy, 70); if (snd) { sfx.clink(); impact(hx, hy, -dx, -dy, 3, '#dfe6f0', .7); } return; }
+  const bb = rg[i] === 3; rg[i] = 0; rLeft--; combo++; score += Math.min(combo, 30); rKick(c, r, dx, dy, 160); shake = Math.min(3, shake + .4);
+  const col = PAL[(r >> 2) % PAL.length][0], x = (c + .5) * RS, y = CEIL + 2 + (r + .5) * RS;
+  if (parts.length < 160) for (let n = 0; n < 2; n++) parts.push({ x, y, vx: rnd(-90, 90), vy: rnd(-150, -20), r: rnd(2, 3.5), life: rnd(.4, .7), col });
+  if (bb && balls.length < 40) { const a = rnd(-1.2, 1.2), v = speed(), nb = newBall(x, y, v * Math.sin(a), -v * Math.cos(a)); balls.push(nb); rings.push({ x, y, r: 4, life: .3, col: '#fff4c9' }); } // ball bricks free an extra ball
+  if (snd) { sfx.pop(Math.min(combo, 14)); buzz(5); impact(hx, hy, -dx, -dy, 2, col, .7); kick(dx, dy, .6); }
+  if (combo === FIRE) word(x, y - 16, 'ON FIRE!', '#ffb03b', 1.3); else if (combo % 25 === 0) word(x, y - 16, 'COMBO x' + combo, '#ffd93d', 1.15);
+  if (Math.random() < .03 && drops.length < 3) drops.push({ x, y, type: Math.random() < .5 ? 'multi' : rollDrop(), t: 0 });
+}
+function stepCells(b) { // ball vs the nearest solid cell it overlaps
+  const y0 = CEIL + 2, c0 = Math.max(0, Math.floor((b.x - b.r) / RS)), c1 = Math.min(RC - 1, Math.floor((b.x + b.r) / RS)), r0 = Math.max(0, Math.floor((b.y - b.r - y0) / RS)), r1 = Math.min(RR - 1, Math.floor((b.y + b.r - y0) / RS));
+  let best = b.r * b.r, bc = -1, br = 0, bx = 0, by = 0;
+  for (let r = r0; r <= r1; r++) for (let c = c0; c <= c1; c++) {
+    if (!rg[r * RC + c]) continue;
+    const cx = clamp(b.x, c * RS, c * RS + RS), cy = clamp(b.y, y0 + r * RS, y0 + r * RS + RS), d2 = (b.x - cx) * (b.x - cx) + (b.y - cy) * (b.y - cy);
+    if (d2 <= best) { best = d2; bc = c; br = r; bx = cx; by = cy; }
+  }
+  if (bc < 0) return;
+  const ivx = b.vx, ivy = b.vy, sp = Math.hypot(ivx, ivy) || 1; let nx = -ivx / sp, ny = -ivy / sp;
+  if (best > 1e-6) { const d = Math.sqrt(best); nx = (b.x - bx) / d; ny = (b.y - by) / d; b.x = bx + nx * b.r; b.y = by + ny * b.r; }
+  else { b.x += nx * (b.r + 2); b.y += ny * (b.r + 2); } // centre inside a cell: back out the way it came
+  const dot = ivx * nx + ivy * ny; if (dot < 0) { b.vx -= 2 * dot * nx; b.vy -= 2 * dot * ny; }
+  hitCell(bc, br, bx, by, ivx, ivy); squish(b, nx, ny);
+}
+function drawCells() {
+  const y0 = CEIL + 2;
+  for (let r = 0; r < RR; r++) { // bricks: PAL bands, gloss strip, darker foot
+    const col = PAL[(r >> 2) % PAL.length];
+    for (let c = 0; c < RC; c++) { const i = r * RC + c; if (!(rg[i] & 1)) continue; const x = c * RS + rdx[i] + .5, y = y0 + r * RS + rdy[i] + .5; g.fillStyle = col[1]; g.fillRect(x, y, RS - 1, RS - 1); g.fillStyle = col[0]; g.fillRect(x, y, RS - 1, RS - 2.5); }
+  }
+  g.fillStyle = 'rgba(255,255,255,.4)';
+  for (let i = 0; i < RN; i++) if (rg[i] === 1) g.fillRect(i % RC * RS + rdx[i] + 2, y0 + (i / RC | 0) * RS + rdy[i] + 1.5, RS - 4, 1.5);
+  g.fillStyle = '#fffbe6'; g.strokeStyle = 'rgba(42,18,69,.75)'; g.lineWidth = 1; // ball bricks show the ball inside
+  for (let i = 0; i < RN; i++) if (rg[i] === 3) { g.beginPath(); g.arc(i % RC * RS + rdx[i] + RS / 2, y0 + (i / RC | 0) * RS + rdy[i] + RS / 2 - .5, 2.5, 0, 6.283); g.fill(); g.stroke(); }
+  for (let p = 0; p < 4; p++) { // metal: steel plate, bevel light, bevel shade, rivet
+    g.fillStyle = ['#8d97a8', '#e9eef5', '#4f5869', '#59627380'][p];
+    for (let i = 0; i < RN; i++) {
+      if (rg[i] !== 2) continue; const x = i % RC * RS + rdx[i], y = y0 + (i / RC | 0) * RS + rdy[i];
+      if (!p) g.fillRect(x, y, RS, RS); else if (p === 1) { g.fillRect(x, y, RS, 1.6); g.fillRect(x, y, 1.6, RS); } else if (p === 2) { g.fillRect(x, y + RS - 1.6, RS, 1.6); g.fillRect(x + RS - 1.6, y, 1.6, RS); } else g.fillRect(x + 3.4, y + 3.4, 2.2, 2.2);
+    }
+  }
+  g.fillStyle = '#fff'; // a glint sweeps across the steel
+  for (let i = 0; i < RN; i++) {
+    if (rg[i] !== 2) continue; const c = i % RC, r = i / RC | 0, ph = (((c + r) / 34 - time * .32) % 1 + 1) % 1; if (ph > .16) continue;
+    g.globalAlpha = Math.sin(ph / .16 * Math.PI) * .6; g.fillRect(c * RS + rdx[i], y0 + r * RS + rdy[i], RS, RS);
+  }
+  g.globalAlpha = 1;
+}
+
 function buildLevel() {
   blocks = []; drops = []; shots = []; fx = []; beams = []; heroes = [];
+  if (rescue) return buildRescue();
   const pl = playlist(), map = pl[(level - 1) % pl.length].rows, loop = Math.floor((level - 1) / pl.length);
   map.forEach((row, r) => [...row].forEach((ch, c) => {
     if (ch === 'M') heroes.push({ r, c, x: 10 + BW / 2 + c * (BW + GAP) + (row[c + 1] === '.' ? (BW + GAP) / 2 : 0), y: CEIL + 24 + BH + r * (BH + GAP) + 2 }); // centred in a 2-wide alcove
@@ -334,7 +411,7 @@ function addGarbage() { // a rival broke a brick: drop one into the highest free
   const H2 = blocks.filter(k => !k.dead && k.hp < 3); if (!H2.length) return;
   const k = H2[Math.floor(Math.random() * H2.length)]; k.hp++; k.maxHp = Math.max(k.maxHp, k.hp); k.heal = 1; k.j.impulse(k.x, k.y - k.hh, 0, 1, 160, 30);
 }
-function newBall(x, y, vx, vy) { return { x, y, vx, vy, r: 7, s: 1, sv: 0, ax: 0, ay: 1, trail: [], tt: 0, stuck: null }; }
+function newBall(x, y, vx, vy) { return { x, y, vx, vy, r: rescue ? 4 : 7, s: 1, sv: 0, ax: 0, ay: 1, trail: [], tt: 0, stuck: null }; }
 function resetBall() { balls = [newBall(paddle.x, paddle.y - 16, 0, 0)]; combo = 0; state = 'ready'; }
 function launchBall(b, a) { const sp = speed(); b.vx = sp * Math.sin(a); b.vy = -sp * Math.cos(a); }
 function launch() {
@@ -363,7 +440,7 @@ function gameOver() {
 }
 function showOv(title, sub, btn) {
   $('ovTitle').innerHTML = title; $('ovSub').textContent = sub; $('ovBtn').textContent = btn;
-  $('ovBest').textContent = best ? `Best ${best}` : ''; show('pMain');
+  $('ovBest').textContent = best ? `Best ${best}` : ''; $('bMode').textContent = rescue ? 'Classic mode' : 'Rescue mode'; show('pMain');
 }
 function pause() {
   if (state !== 'play' && state !== 'ready' && state !== 'clear') return;
@@ -456,7 +533,7 @@ function givePower(type, x) {
     for (const b of balls.slice()) {
       let vx = b.vx, vy = b.vy; if (b.stuck) { const sp = speed(), a = aim(b); vx = sp * Math.sin(a); vy = -sp * Math.cos(a); }
       for (const a of [-.45, .45]) {
-        if (balls.length >= 7) break;
+        if (balls.length >= (rescue ? 30 : 7)) break;
         const c = Math.cos(a), s = Math.sin(a), nb = newBall(b.x, b.y, vx * c - vy * s, vx * s + vy * c); nb.r = b.r; balls.push(nb);
       }
     }
@@ -493,6 +570,7 @@ function stepBall(b, dt) {
     b.vx = sp * Math.sin(a); b.vy = -sp * Math.cos(a); sfx.paddle();
     break;
   }
+  if (rescue) stepCells(b);
   for (const k of blocks) {
     if (k.dead || k.delay > 0) continue;
     const cx = clamp(b.x, k.x - k.hw, k.x + k.hw), cy = clamp(b.y, k.y - k.hh, k.y + k.hh);
@@ -542,6 +620,7 @@ function update(dt) {
     if (mp && mp.live && balls.length < nb) mpUp({ t: 'send', kind: 'ball', n: nb - balls.length });
     for (const s of shots) {
       s.y -= 640 * dt; if (s.y < CEIL) { s.dead = true; continue; }
+      if (rescue) { const c = Math.floor(s.x / RS), r = Math.floor((s.y - CEIL - 2) / RS); if (r >= 0 && r < RR && c >= 0 && c < RC && rg[r * RC + c]) { s.dead = true; hitCell(c, r, s.x, s.y, 0, -1); } continue; }
       for (const k of blocks) if (!k.dead && k.delay <= 0 && Math.abs(s.x - k.x) < k.hw + 2 && Math.abs(s.y - k.y) < k.hh + 5) { s.dead = true; hitBlock(k, s.x, k.y + k.hh, 0, -1); break; }
     }
     shots = shots.filter(s => !s.dead);
@@ -556,9 +635,10 @@ function update(dt) {
     fx = fx.filter(f => !f.done);
     blocks = blocks.filter(k => !k.dead);
     if (mp && mp.live && !mp.won && !blocks.some(k => !k.garb)) { mp.won = true; mpUp({ t: 'clear' }); } // own bricks gone: wins even with rival bricks left
+    if (rescue && !rWin) { const h = heroes[0]; if (balls.some(b => Math.hypot(b.x - h.x, b.y - h.y + 20) < 15 + b.r)) { rWin = true; h.free = true; word(clamp(h.x, 90, W - 90), h.y - 60, 'RESCUED!', '#ffd93d', 1.5); } }
     if (mp && mp.won) {} // waiting for the host's win
-    else if (!blocks.length) {
-      state = 'clear'; clearT = 1.7; balls = []; drops = []; shots = []; fx = []; score += 100 * level; sfx.clear(); buzz(40);
+    else if (rescue ? rWin || !rLeft : !blocks.length) {
+      state = 'clear'; clearT = rescue ? 2.4 : 1.7; balls = []; drops = []; shots = []; fx = []; score += (rescue ? 500 : 100) * level; sfx.clear(); buzz(40);
     } else if (!balls.length) {
       lives--; sfx.lose(); buzz(60); shake = 8; clearPowers(); drops = []; word(paddle.x, paddle.y - 50, 'OOF!', '#ff4f79', 1.4);
       if (lives <= 0) gameOver(); else resetBall();
@@ -571,7 +651,12 @@ function update(dt) {
     ambT -= dt;
     if (ambT <= 0 && blocks.length) { ambT = rnd(.25, .6); const k = blocks[Math.floor(Math.random() * blocks.length)]; k.j.impulse(k.x + rnd(-15, 15), k.y, rnd(-.5, .5), 1, 200, 30); }
   }
-  const tr = 7 * (1 + megaTier);
+  for (const i of rAct) { // rescue cells spring back to rest
+    rvx[i] += (-520 * rdx[i] - 16 * rvx[i]) * dt; rvy[i] += (-520 * rdy[i] - 16 * rvy[i]) * dt; rdx[i] += rvx[i] * dt; rdy[i] += rvy[i] * dt;
+    if (Math.abs(rdx[i]) + Math.abs(rdy[i]) < .03 && Math.abs(rvx[i]) + Math.abs(rvy[i]) < 1) { rdx[i] = rdy[i] = rvx[i] = rvy[i] = 0; rAct.delete(i); }
+  }
+  if (rescue && heroes[0]) heroes[0].y = CEIL + 2 + heroes[0].fr * RS;
+  const tr = (rescue ? 4 : 7) * (1 + megaTier);
   for (const b of balls) { b.r += (tr - b.r) * Math.min(1, dt * 6); b.sv += (-700 * (b.s - 1) - 14 * b.sv) * dt; b.s = clamp(b.s + b.sv * dt, .55, 1.5); }
   for (const k of blocks) {
     if (k.delay > 0) { k.delay -= dt; continue; }
@@ -618,7 +703,7 @@ function dropIcon(t) { // drawn at the origin in the current fillStyle
 }
 function hero(h) { // mariachi with spiky golden hair in a flame aura that swells with the combo
   const p = heroP, R = 36 + p * 14, D = '#1b1430', G = '#ffd23f', S = '#e8a66b';
-  g.save(); g.translate(h.x, h.y); g.lineJoin = g.lineCap = 'round';
+  g.save(); g.translate(h.x, h.y - (h.free ? Math.abs(Math.sin(time * 9)) * 10 : 0)); g.lineJoin = g.lineCap = 'round';
   for (let l = 0; l < 2; l++) {
     const q = R * (l ? .66 : 1), n = 13; g.beginPath();
     for (let i = 0; i < n * 2; i++) { const a = -Math.PI / 2 + i * Math.PI / n, d = i % 2 ? q * .7 : q * (.75 + .55 * Math.max(0, -Math.sin(a))) * (.82 + .18 * Math.sin(time * 9 + i * 2.4 + l)); g.lineTo(Math.cos(a) * d * .9, -22 + Math.sin(a) * d); }
@@ -653,6 +738,7 @@ function render() {
   if (ox > 1) { g.fillStyle = 'rgba(255,255,255,.035)'; g.fillRect(0, 0, W, H); g.fillStyle = 'rgba(255,255,255,.14)'; g.fillRect(-2, 0, 2, H); g.fillRect(W, 0, 2, H); }
   g.fillStyle = 'rgba(255,255,255,.12)'; g.fillRect(0, CEIL - 2, W, 2);
 
+  if (rescue) drawCells();
   for (const k of blocks) {
     if (k.delay > 0) continue;
     const j = k.j, ps = k.pop > 0 ? 1 + .14 * Math.sin(k.pop * Math.PI) : 1;
@@ -749,9 +835,9 @@ function render() {
   } else if (state === 'clear') {
     const t = 1.7 - clearT, s = 1 + Math.exp(-t * 5) * Math.sin(t * 18) * .35;
     g.save(); g.translate(W / 2, H * .42); g.scale(s, 2 - s);
-    g.font = `700 40px ${FONT}`; g.fillStyle = 'rgba(0,0,0,.3)'; g.fillText('Level clear!', 0, 4);
-    g.fillStyle = '#ffd93d'; g.fillText('Level clear!', 0, 0);
-    g.font = `600 16px ${FONT}`; g.fillStyle = '#fff'; g.fillText('+' + 100 * level + ' bonus', 0, 36); g.restore();
+    g.font = `700 40px ${FONT}`; g.fillStyle = 'rgba(0,0,0,.3)'; g.fillText(rescue ? 'Rescued!' : 'Level clear!', 0, 4);
+    g.fillStyle = '#ffd93d'; g.fillText(rescue ? 'Rescued!' : 'Level clear!', 0, 0);
+    g.font = `600 16px ${FONT}`; g.fillStyle = '#fff'; g.fillText('+' + (rescue ? 500 : 100) * level + ' bonus', 0, 36); g.restore();
   }
 }
 
@@ -794,6 +880,7 @@ const sfx = {
   boing(n) { const f = comboF(n); tone({ f: f * .75, f2: f * 1.25, f3: f, glide: .04, dur: .24, g: .22, vib: f * .04 }); },
   pop(n) { const f = comboF(n); tone({ f, f2: f * 2, glide: .07, dur: .13, g: .26 }); noise({ dur: .05, g: .1, freq: 3200 }); },
   paddle() { tone({ type: 'triangle', f: 190, f2: 115, f3: 135, glide: .06, dur: .24, g: .32, vib: 9 }); },
+  clink() { tone({ f: 2300, f2: 1700, glide: .05, dur: .07, g: .05 }); noise({ dur: .03, g: .04, freq: 6000 }); },
   wall() { tone({ f: 620, f2: 470, glide: .03, dur: .07, g: .07 }); },
   launch() { tone({ f: 260, f2: 540, glide: .09, dur: .17, g: .18 }); },
   power() { const t = AU.ctx ? AU.ctx.currentTime : 0; tone({ f: 660, f2: 1320, glide: .08, dur: .14, g: .16 }); tone({ t: t + .09, f: 990, f2: 1980, glide: .08, dur: .2, g: .16 }); },
@@ -862,7 +949,7 @@ function back() {
   else if (panel === 'pMulti') quit();
 }
 function quit() {
-  mpLeave(); testMap = null; level = 1; clearPowers(); balls = []; parts = []; flames = []; texts = []; sparks = []; flashes = []; words = []; buildLevel(); hud();
+  mpLeave(); testMap = null; rescue = false; level = 1; clearPowers(); balls = []; parts = []; flames = []; texts = []; sparks = []; flashes = []; words = []; buildLevel(); hud();
   state = 'menu'; showOv('Jelly<br>Breaker', 'Wobbly bricks, a squishy ball, one thumb.', 'Tap to play');
   if (AU.ctx) AU.ctx.resume();
 }
@@ -943,7 +1030,7 @@ function checkWin() {
 function onMsg(d) {
   if (!mp) return;
   if (d.t === 'lobby') { mp.players = d.players; if (!mp.host) mp.cd = d.cd; lobbyUI(); }
-  else if (d.t === 'go') { mp.live = true; mp.won = false; testMap = null; startGame(); }
+  else if (d.t === 'go') { mp.live = true; mp.won = false; testMap = null; rescue = false; startGame(); }
   else if (d.t === 'get' && mp.live) {
     if (d.kind === 'ball') { mp.pb += d.n; word(paddle.x, paddle.y - 60, d.n > 1 ? `+${d.n} BALLS!` : 'BONUS BALL!', '#7bed6f'); }
     else { mp.pk += d.n; texts.push({ x: W / 2, y: CEIL + 14, t: `+${d.n} brick${d.n > 1 ? 's' : ''} from ${d.from}`, life: 1 }); }
@@ -1061,7 +1148,7 @@ function dsDel() {
 }
 function dsTest() {
   const rows = dsRows(); if (!rows.length) return msg('dsMsg', 'Add at least one brick first');
-  testMap = { id: ds.id, name: ds.name, rows }; startGame();
+  testMap = { id: ds.id, name: ds.name, rows }; rescue = false; startGame();
 }
 // one-line share code: JB:<name>:<row>/<row>/...  (loader also takes bare 7-char rows, e.g. pasted from LEVELS)
 function dsShare() {
@@ -1118,6 +1205,7 @@ function act(a, el) {
   else if (a === 'pow') { const t = el.dataset.p; drops.push({ x: clamp(paddle.x + rnd(-30, 30), 20, W - 20), y: paddle.y - 160 - drops.length * 30, type: t, t: 0 }); msg('dbMsg', DROPS[t][2] + ' dropped above the pad. Resume to catch it.'); }
   else if (a === 'life') { lives++; hud(); msg('dbMsg', 'Lives: ' + lives); }
   else if (a === 'multi') openMulti();
+  else if (a === 'mode') { rescue = !rescue; startGame(); }
   else if (a === 'mpQuick' || a === 'mpCreate' || a === 'mpJoin') mpGo(a);
   else if (a === 'mpShare' && mp) mpShare();
   else if (a === 'mpLeave') quit();
@@ -1221,7 +1309,7 @@ window.__jelly = {
   get state() { return state; }, get score() { return score; }, get shown() { return Math.floor(shown); }, get blocks() { return blocks.length; }, get balls() { return balls.length; }, get lives() { return lives; }, get level() { return level; },
   get bx() { return balls[0] ? balls[0].x : null; }, get gun() { return gun; }, get megaTier() { return megaTier; }, get sticky() { return sticky; }, get pads() { return pads().length; },
   get stuck() { return balls.filter(b => b.stuck).length; }, get drops() { return drops.length; }, get panel() { return panel; },
-  get px() { return paddle.x; }, get heroes() { return heroes.map(h => [h.r, h.c]); }, get br() { return balls[0] ? balls[0].r : null; }, get hps() { return blocks.map(k => k.hp); }, get sparks() { return sparks.length; }, get words() { return words.map(w => w.t); }, get juice() { return juice; }, get mp() { return mp && { host: mp.host, live: mp.live, cd: mp.cd, code: mp.code, players: mp.players.map(p => p.name + ':' + (p.alive ? p.lives : 'out')) }; }, get cells() { return blocks.map(k => k.r + ',' + k.c); }, give(t) { givePower(t, paddle.x); }, get combo() { return combo; }, get flames() { return flames.length; }, get garb() { return blocks.filter(k => k.garb).length; }, wipe(n = 99) { for (const k of blocks.filter(k => !k.garb && !k.dead).slice(0, n)) while (!k.dead) hitBlock(k, k.x, k.y + k.hh, 0, -1); }
+  get px() { return paddle.x; }, get heroes() { return heroes.map(h => [h.r, h.c]); }, get rescue() { return rescue; }, get ballList() { return balls; }, get rleft() { return rLeft; }, get hero() { return heroes[0] && { x: heroes[0].x, y: heroes[0].y, free: !!heroes[0].free }; }, get br() { return balls[0] ? balls[0].r : null; }, get hps() { return blocks.map(k => k.hp); }, get sparks() { return sparks.length; }, get words() { return words.map(w => w.t); }, get juice() { return juice; }, get mp() { return mp && { host: mp.host, live: mp.live, cd: mp.cd, code: mp.code, players: mp.players.map(p => p.name + ':' + (p.alive ? p.lives : 'out')) }; }, get cells() { return blocks.map(k => k.r + ',' + k.c); }, give(t) { givePower(t, paddle.x); }, get combo() { return combo; }, get flames() { return flames.length; }, get garb() { return blocks.filter(k => k.garb).length; }, wipe(n = 99) { for (const k of blocks.filter(k => !k.garb && !k.dead).slice(0, n)) while (!k.dead) hitBlock(k, k.x, k.y + k.hh, 0, -1); }
 };
 if (NATIVE) try { // app shell: dark status bar, Android back button behaves like Escape
   PLUG.StatusBar && PLUG.StatusBar.setStyle({ style: 'DARK' }).catch(() => {});
