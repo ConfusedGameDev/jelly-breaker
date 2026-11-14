@@ -269,7 +269,8 @@ class Jelly {
 const PAL = [['#ff4f79', '#c2264f'], ['#ff9f43', '#c96a12'], ['#ffd93d', '#c79c0a'], ['#7bed6f', '#3fae35'], ['#3ddbd9', '#1a9c9a'], ['#5b8cff', '#2f5bd0'], ['#b06bff', '#7a39cc']];
 const REGEN_COL = ['#5cf2a5', '#1f9e62'];
 const PTS = [50, 40, 30, 25, 20, 15, 10], SPECIAL_PTS = 50, FIRE = 10; // base points per PAL row colour; specials add SPECIAL_PTS; FIRE = combo that lights the ball
-// level grids: '.' empty, 1-3 hit points, R row-clear, C column-clear, B bomb (3x3), H regenerating (3 HP)
+// level grids: '.' empty, 1-3 hit points, R row-clear, C column-clear, B bomb (3x3), H regenerating (3 HP), M the mariachi (no brick)
+const FORT = ['1111111', '1111111', '1111212', '11112.2', '11112.2', '11222.2', '..2...2', 'M.2.2.2', '222.222']; // walled chamber, door above the launch spot
 const LEVELS = [
   ['1111111', '1111111', '1111111', '1111111'],
   ['1.1.1.1', '.1.1.1.', '1.1.1.1', '.1.1.1.', '1.1.1.1', '.1.1.1.'],
@@ -280,13 +281,14 @@ const LEVELS = [
 ];
 const BRICK = { '1': ['n', 1], '2': ['n', 2], '3': ['n', 3], R: ['row', 1], C: ['col', 1], B: ['bomb', 1], H: ['regen', 3] };
 const COLS = 7, ROWS = 10, GAP = 5, BW = (W - 20 - GAP * (COLS - 1)) / COLS, BH = 22, STEP = 1 / 120;
-const DEFAULTS = LEVELS.map((rows, i) => ({ id: 'b' + (i + 1), name: 'Level ' + (i + 1), rows }));
-const validRows = r => Array.isArray(r) && r.length > 0 && r.length <= ROWS && r.every(s => typeof s === 'string' && s.length === COLS && [...s].every(ch => ch === '.' || ch in BRICK));
+const DEFAULTS = [{ id: 'b0', name: 'El Saiyachi', rows: FORT }, ...LEVELS.map((rows, i) => ({ id: 'b' + (i + 1), name: 'Level ' + (i + 1), rows }))];
+const validRows = r => Array.isArray(r) && r.length > 0 && r.length <= ROWS && r.every(s => typeof s === 'string' && s.length === COLS && [...s].every(ch => ch === '.' || ch === 'M' || ch in BRICK));
 let lib = null, order = null, testMap = null;
 try { lib = JSON.parse(localStorage.getItem('jellybreaker.levels')); order = JSON.parse(localStorage.getItem('jellybreaker.order')); } catch (e) {}
 lib = Array.isArray(lib) ? lib.filter(l => l && typeof l.id === 'string' && validRows(l.rows)) : [];
 if (!lib.length) lib = JSON.parse(JSON.stringify(DEFAULTS));
 order = Array.isArray(order) ? order.filter(id => typeof id === 'string') : lib.map(l => l.id);
+try { if (localStorage.getItem('jellybreaker.fort') !== '1') { localStorage.setItem('jellybreaker.fort', '1'); if (!lib.some(l => l.id === 'b0')) { lib.unshift(JSON.parse(JSON.stringify(DEFAULTS[0]))); order.unshift('b0'); } } } catch (e) {} // saved libraries get the new first level once
 function saveLib() { try { localStorage.setItem('jellybreaker.levels', JSON.stringify(lib)); localStorage.setItem('jellybreaker.order', JSON.stringify(order)); } catch (e) {} }
 const byId = id => lib.find(l => l.id === id);
 const playlist = () => { if (mp && mp.live) return DEFAULTS; if (testMap) return [testMap]; const p = order.map(byId).filter(Boolean); return p.length ? p : DEFAULTS; };
@@ -301,15 +303,16 @@ paddle.tj = new Jelly(paddle.x, paddle.y, paddle.w, paddle.h, 8, 2, 1300, 18, 90
 let state = 'menu', prevState = 'ready', score = 0, lives = 3, level = 1, combo = 0, best = 0;
 let blocks = [], balls = [], drops = [], parts = [], flames = [], rings = [], texts = [], shots = [], fx = [], beams = [], sparks = [], flashes = [], words = [];
 let targetX = W / 2, shake = 0, kx = 0, ky = 0, juice = true, clearT = 0, time = 0, ambT = 0, keyL = false, keyR = false, muted = false;
-let gun = 0, gunTier = 0, sticky = 0, mega = 0, megaTier = 0, mp = null, myName = 'Jelly' + Math.floor(rnd(10, 99));
+let heroes = [], heroP = 0, gun = 0, gunTier = 0, sticky = 0, mega = 0, megaTier = 0, mp = null, myName = 'Jelly' + Math.floor(rnd(10, 99));
 try { best = +localStorage.getItem('jellybreaker.best') || 0; muted = localStorage.getItem('jellybreaker.muted') === '1'; myName = localStorage.getItem('jellybreaker.name') || myName; } catch (e) {}
 const speed = () => Math.min(480, 320 + (level - 1) * 20);
 const aim = b => clamp(b.stuck.off / (paddle.w / 2), -1, 1) * 1.05; // stuck ball leaves like a normal pad bounce from that spot
 
 function buildLevel() {
-  blocks = []; drops = []; shots = []; fx = []; beams = [];
+  blocks = []; drops = []; shots = []; fx = []; beams = []; heroes = [];
   const pl = playlist(), map = pl[(level - 1) % pl.length].rows, loop = Math.floor((level - 1) / pl.length);
   map.forEach((row, r) => [...row].forEach((ch, c) => {
+    if (ch === 'M') heroes.push({ r, c, x: 10 + BW / 2 + c * (BW + GAP) + (row[c + 1] === '.' ? (BW + GAP) / 2 : 0), y: CEIL + 24 + BH + r * (BH + GAP) + 2 }); // centred in a 2-wide alcove
     if (!BRICK[ch]) return;
     let [type, hp] = BRICK[ch]; if (type === 'n' && loop > 0 && hp === 1 && (r + c + loop) % 3 === 0) hp = 2;
     blocks.push(mkBlock(r, c, type, hp, type === 'regen' ? REGEN_COL : PAL[r % PAL.length], r * .05 + c * .025, 70));
@@ -323,7 +326,7 @@ function mkBlock(r, c, type, hp, col, delay, drop) {
 function addGarbage() { // a rival broke a brick: drop one into the highest free cell, or harden a brick if the field is full
   const free = [];
   for (let r = 0; r < ROWS && free.length < COLS; r++) for (let c = 0; c < COLS; c++) {
-    if (blocks.some(k => !k.dead && k.r === r && k.c === c)) continue;
+    if (blocks.some(k => !k.dead && k.r === r && k.c === c) || heroes.some(h => h.r === r && h.c === c)) continue;
     const x = 10 + BW / 2 + c * (BW + GAP), y = CEIL + 24 + BH / 2 + r * (BH + GAP);
     if (!balls.some(b => Math.abs(b.x - x) < BW / 2 + b.r + 4 && Math.abs(b.y - y) < BH / 2 + b.r + 4)) free.push([r, c]);
   }
@@ -510,7 +513,7 @@ function stepBall(b, dt) {
   fixSpeed(b);
 }
 function update(dt) {
-  time += dt; if (mp) mpTick(dt);
+  time += dt; heroP += (Math.min(1, combo / FIRE) - heroP) * Math.min(1, dt * 4); if (mp) mpTick(dt);
   // paddle
   if (keyL) targetX -= 460 * dt; if (keyR) targetX += 460 * dt;
   if (state === 'play') {
@@ -613,6 +616,35 @@ function dropIcon(t) { // drawn at the origin in the current fillStyle
   else if (t === 'sticky') { g.beginPath(); g.arc(0, -2.5, 3.5, 0, 6.283); g.fill(); g.fillRect(-7.5, 2.5, 15, 3.5); }
   else { g.beginPath(); g.arc(0, 0, 6.5, 0, 6.283); g.fill(); g.fillStyle = 'rgba(255,255,255,.55)'; g.beginPath(); g.arc(-2, -2, 2, 0, 6.283); g.fill(); }
 }
+function hero(h) { // mariachi with spiky golden hair in a flame aura that swells with the combo
+  const p = heroP, R = 36 + p * 14, D = '#1b1430', G = '#ffd23f', S = '#e8a66b';
+  g.save(); g.translate(h.x, h.y); g.lineJoin = g.lineCap = 'round';
+  for (let l = 0; l < 2; l++) {
+    const q = R * (l ? .66 : 1), n = 13; g.beginPath();
+    for (let i = 0; i < n * 2; i++) { const a = -Math.PI / 2 + i * Math.PI / n, d = i % 2 ? q * .7 : q * (.75 + .55 * Math.max(0, -Math.sin(a))) * (.82 + .18 * Math.sin(time * 9 + i * 2.4 + l)); g.lineTo(Math.cos(a) * d * .9, -22 + Math.sin(a) * d); }
+    g.closePath(); const gr = g.createRadialGradient(0, -22, 3, 0, -22, q * 1.25); gr.addColorStop(0, l ? 'rgba(255,255,225,.95)' : 'rgba(255,225,70,.9)'); gr.addColorStop(1, l ? 'rgba(255,240,120,.7)' : 'rgba(255,150,20,.55)'); g.fillStyle = gr; g.fill();
+    if (!l) { g.strokeStyle = 'rgba(255,236,140,.75)'; g.lineWidth = 1.5; g.stroke(); }
+  }
+  g.scale(.95, .95);
+  g.fillStyle = 'rgba(0,0,0,.3)'; g.beginPath(); g.ellipse(0, 0, 11, 2.5, 0, 0, 6.283); g.fill();
+  g.fillStyle = D; g.fillRect(-7, -15, 5.5, 14); g.fillRect(1.5, -15, 5.5, 14);
+  g.fillStyle = G; for (let i = 0; i < 4; i++) { g.fillRect(-7.7, -13 + i * 3.2, 1.5, 1.5); g.fillRect(6.2, -13 + i * 3.2, 1.5, 1.5); }
+  g.fillStyle = '#4a2a14'; g.fillRect(-8.5, -2.5, 7.5, 2.5); g.fillRect(1, -2.5, 7.5, 2.5);
+  g.translate(0, Math.sin(time * 5) * (.8 + p));
+  g.strokeStyle = D; g.lineWidth = 4.2; g.beginPath(); g.moveTo(-7, -27); g.lineTo(-13, -20); g.moveTo(7, -27); g.lineTo(13, -20); g.stroke();
+  g.fillStyle = S; g.beginPath(); g.arc(-13.5, -18.5, 2.6, 0, 6.283); g.arc(13.5, -18.5, 2.6, 0, 6.283); g.fill();
+  g.fillStyle = D; g.beginPath(); g.moveTo(-8.5, -30); g.lineTo(8.5, -30); g.lineTo(7, -14); g.lineTo(-7, -14); g.closePath(); g.fill(); g.strokeStyle = G; g.lineWidth = 1; g.stroke();
+  g.fillStyle = '#fff'; g.beginPath(); g.moveTo(-3, -30); g.lineTo(3, -30); g.lineTo(0, -20); g.fill();
+  g.fillStyle = '#e8262c'; g.beginPath(); g.moveTo(0, -28.5); g.lineTo(-4.5, -31); g.lineTo(-4.5, -26); g.lineTo(0, -28.5); g.lineTo(4.5, -31); g.lineTo(4.5, -26); g.fill();
+  g.fillStyle = S; g.beginPath(); g.arc(0, -36, 6.2, 0, 6.283); g.fill();
+  g.strokeStyle = D; g.lineWidth = 1.3; g.beginPath(); g.moveTo(-4.4, -38.6); g.lineTo(-1.4, -37.2); g.moveTo(4.4, -38.6); g.lineTo(1.4, -37.2); g.stroke();
+  g.lineWidth = 2; g.beginPath(); g.moveTo(-5, -32.4); g.quadraticCurveTo(-2.5, -35, 0, -33.6); g.quadraticCurveTo(2.5, -35, 5, -32.4); g.stroke();
+  g.fillStyle = D; g.beginPath(); g.ellipse(0, -41.5, 17, 4, 0, 0, 6.283); g.fill(); g.strokeStyle = G; g.lineWidth = 1.4; g.stroke();
+  g.beginPath(); g.moveTo(-7.5, -42); // hair bursts through the sombrero
+  for (let i = 0; i < 5; i++) { const x = -7.5 + i * 3, w = Math.sin(time * 11 + i * 1.7) * (1 + p); g.lineTo(x + 1.5 + (i - 2) * 1.7 + w * .4, -52 - (2 - Math.abs(i - 2)) * 3.5 - p * 4 - w); g.lineTo(x + 3, i < 4 ? -45 : -42); }
+  g.closePath(); g.fillStyle = '#ffe14d'; g.fill(); g.strokeStyle = '#e39a00'; g.lineWidth = 1.1; g.stroke();
+  g.restore();
+}
 function render() {
   g.setTransform(dpr, 0, 0, dpr, 0, 0);
   g.drawImage(bg, 0, 0, sw, sh);
@@ -635,6 +667,7 @@ function render() {
     if (k.type !== 'n') glyph(k);
     g.restore();
   }
+  for (const h of heroes) hero(h);
   for (const b of beams) {
     const k = b.k, a = b.life / .35, s = 1.6 - a * .6;
     g.globalAlpha = a * .55; g.fillStyle = b.col;
@@ -806,8 +839,8 @@ function schedule() {
 
 /* ---------- menus: pause, debug, level designer, level order ---------- */
 let panel = 'pMain', dbLv = 1, ds = null, tool = '1', paintCh = null, delArm = 0;
-const TOOLS = [['.', 'Empty'], ['1', '1 hit'], ['2', '2 hits'], ['3', '3 hits'], ['R', '↔ Row'], ['C', '↕ Col'], ['B', '✸ Bomb'], ['H', '✚ Regen']];
-const GLYPH = { '2': '2', '3': '3', R: '↔', C: '↕', B: '✸', H: '✚' };
+const TOOLS = [['.', 'Empty'], ['1', '1 hit'], ['2', '2 hits'], ['3', '3 hits'], ['R', '↔ Row'], ['C', '↕ Col'], ['B', '✸ Bomb'], ['H', '✚ Regen'], ['M', '★ Hero']];
+const GLYPH = { '2': '2', '3': '3', R: '↔', C: '↕', B: '✸', H: '✚', M: '★' };
 const msg = (id, t) => { $(id).textContent = t; };
 const newId = () => 'u' + Date.now().toString(36) + Math.floor(Math.random() * 1e3);
 function show(id) {
@@ -986,6 +1019,7 @@ for (let i = 0; i < ROWS * COLS; i++) dsGrid.appendChild(document.createElement(
 const blankGrid = () => Array.from({ length: ROWS }, () => '.'.repeat(COLS).split(''));
 function cellStyle(ch, r) {
   if (ch === '.') return 'background:rgba(255,255,255,.07)';
+  if (ch === 'M') return 'background:rgba(255,215,60,.3);color:#ffe14d';
   const c = ch === 'H' ? REGEN_COL : PAL[r % PAL.length]; return `background:${c[0]};box-shadow:inset 0 -2px 0 ${c[1]};color:#2a1245`;
 }
 function dsLoad(l) { ds = { id: l.id, name: l.name, grid: blankGrid() }; l.rows.forEach((row, r) => { ds.grid[r] = row.split(''); }); dsRender(); }
@@ -1038,7 +1072,7 @@ function dsShare() {
   if (navigator.share && matchMedia('(pointer:coarse)').matches) navigator.share({ text: code }).then(() => done('Shared'), copy); else copy();
 }
 function parseLevel(txt) {
-  const m = /JB:(.*):([.123RCBH/]+)/i.exec(txt), cs = '.123RCBHrcbh';
+  const m = /JB:(.*):([.123RCBHM/]+)/i.exec(txt), cs = '.123RCBHMrcbhm';
   let name = 'Shared level', rows;
   if (m) { name = m[1].trim().slice(0, 24) || name; rows = m[2].toUpperCase().replace(/^\/+|\/+$/g, '').split('/'); }
   else rows = (txt.match(new RegExp(`(?<![${cs}])[${cs}]{${COLS}}(?![${cs}])`, 'g')) || []).map(r => r.toUpperCase());
@@ -1046,7 +1080,7 @@ function parseLevel(txt) {
 }
 function dsLoadText() {
   const l = parseLevel($('dsText').value);
-  if (!l) return msg('dsMsg', `No valid level found. Use a JB: code or rows of ${COLS} characters (. 1 2 3 R C B H), up to ${ROWS} rows.`);
+  if (!l) return msg('dsMsg', `No valid level found. Use a JB: code or rows of ${COLS} characters (. 1 2 3 R C B H M), up to ${ROWS} rows.`);
   dsLoad({ id: newId(), name: l.name, rows: l.rows }); msg('dsMsg', 'Loaded. Save to keep it, or Test to play it.');
 }
 
@@ -1187,7 +1221,7 @@ window.__jelly = {
   get state() { return state; }, get score() { return score; }, get shown() { return Math.floor(shown); }, get blocks() { return blocks.length; }, get balls() { return balls.length; }, get lives() { return lives; }, get level() { return level; },
   get bx() { return balls[0] ? balls[0].x : null; }, get gun() { return gun; }, get megaTier() { return megaTier; }, get sticky() { return sticky; }, get pads() { return pads().length; },
   get stuck() { return balls.filter(b => b.stuck).length; }, get drops() { return drops.length; }, get panel() { return panel; },
-  get px() { return paddle.x; }, get br() { return balls[0] ? balls[0].r : null; }, get hps() { return blocks.map(k => k.hp); }, get sparks() { return sparks.length; }, get words() { return words.map(w => w.t); }, get juice() { return juice; }, get mp() { return mp && { host: mp.host, live: mp.live, cd: mp.cd, code: mp.code, players: mp.players.map(p => p.name + ':' + (p.alive ? p.lives : 'out')) }; }, get cells() { return blocks.map(k => k.r + ',' + k.c); }, give(t) { givePower(t, paddle.x); }, get combo() { return combo; }, get flames() { return flames.length; }, get garb() { return blocks.filter(k => k.garb).length; }, wipe(n = 99) { for (const k of blocks.filter(k => !k.garb && !k.dead).slice(0, n)) while (!k.dead) hitBlock(k, k.x, k.y + k.hh, 0, -1); }
+  get px() { return paddle.x; }, get heroes() { return heroes.map(h => [h.r, h.c]); }, get br() { return balls[0] ? balls[0].r : null; }, get hps() { return blocks.map(k => k.hp); }, get sparks() { return sparks.length; }, get words() { return words.map(w => w.t); }, get juice() { return juice; }, get mp() { return mp && { host: mp.host, live: mp.live, cd: mp.cd, code: mp.code, players: mp.players.map(p => p.name + ':' + (p.alive ? p.lives : 'out')) }; }, get cells() { return blocks.map(k => k.r + ',' + k.c); }, give(t) { givePower(t, paddle.x); }, get combo() { return combo; }, get flames() { return flames.length; }, get garb() { return blocks.filter(k => k.garb).length; }, wipe(n = 99) { for (const k of blocks.filter(k => !k.garb && !k.dead).slice(0, n)) while (!k.dead) hitBlock(k, k.x, k.y + k.hh, 0, -1); }
 };
 if (NATIVE) try { // app shell: dark status bar, Android back button behaves like Escape
   PLUG.StatusBar && PLUG.StatusBar.setStyle({ style: 'DARK' }).catch(() => {});
